@@ -21,6 +21,16 @@ export default defineConfig({
     // 关闭页面动画/过渡，减少时序抖动对截图的影响。
     reducedMotion: 'reduce',
   },
+  // 截图比对的容差配置：本地 Windows 与 CI Linux 的系统字体不同，
+  // 逐像素比对会因字体渲染差异误报。放宽到可接受的范围后，
+  // 仍能捕捉到明显的内容或布局变化。
+  expect: {
+    toHaveScreenshot: {
+      maxDiffPixels: 10000,
+      maxDiffPixelRatio: 0.05,
+      threshold: 0.3,
+    },
+  },
   // 运行测试前自动启动本地开发服务器。
   webServer: {
     // 启动 Vite dev server，并固定绑定到 127.0.0.1:5173。
