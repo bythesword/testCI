@@ -107,4 +107,5 @@ export async function renderTriangle(canvas: HTMLCanvasElement): Promise<void> {
   renderPass.end()
 
   device.queue.submit([commandEncoder.finish()])
+  await device.queue.onSubmittedWorkDone()
 }
