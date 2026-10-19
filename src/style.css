@@ -22,6 +22,30 @@ body {
   border-radius: 12px;
 }
 
+.card.webgpu-card {
+  width: 440px;
+}
+
+.links {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+a {
+  color: #007aff;
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+.back-link {
+  display: inline-block;
+  margin-top: 24px;
+}
+
 h1 {
   margin: 0 0 8px;
   font-size: 24px;
@@ -57,4 +81,19 @@ button:hover {
 button:focus-visible {
   outline: 2px solid #007aff;
   outline-offset: 2px;
+}
+
+canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 24px auto;
+  background: #ffffff;
+  border: 1px solid #e5e5ea;
+  border-radius: 8px;
+}
+
+#webgpu-status {
+  min-height: 1.5em;
+  margin: 0;
 }

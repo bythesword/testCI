@@ -5,13 +5,14 @@ const app = document.querySelector<HTMLDivElement>('#app')!
 
 app.innerHTML = `
   <main class="card">
-    <h1>Minimal Vite + TS</h1>
+    <h1>计数器</h1>
     <p id="count">Count is 0</p>
     <div class="actions">
       <button id="decrement" type="button">-1</button>
       <button id="increment" type="button">+1</button>
     </div>
     <button id="reset" type="button">Reset</button>
+    <a class="back-link" href="/">返回首页</a>
   </main>
 `
 
