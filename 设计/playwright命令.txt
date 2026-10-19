@@ -1,0 +1,12 @@
+初始快照
+    npm run test:e2e:update（也就是 playwright test --update-snapshots）时生成的。
+
+
+只更新指定快照用 --grep（-g）按测试名称过滤，或直接指定测试文件，再加 --update-snapshots：
+- 按名称更新一个用例：
+  npx playwright test -g "initial" --update-snapshots
+- 只更新某个文件里的快照：
+  npx playwright test tests/e2e/app.spec.ts --update-snapshots
+- 文件 + 名称组合，最精确：
+  npx playwright test tests/e2e/app.spec.ts -g "initial" --update-snapshots
+-g 匹配的是测试标题（支持正则），不区分大小写。比如当前两个用例标题是 “renders the initial counter state” 和 “increments the counter and updates the snapshot”，用 -g "initial" 只会更新第一个，第二个的基线保持不变。    
