@@ -42,6 +42,9 @@ Playwright 端到端测试各自负责的范围。
 4. 等待状态变为“WebGPU 渲染完成”。状态只有在 adapter、device、管线创建和 GPU queue
    提交全部成功后才更新，因此能证明 WebGPU 渲染链路是通的。
 
+该测试文件通过 `test.skip(process.env.CI === 'true')` 在 CI 环境跳过。也就是说，
+WebGPU 的 Playwright 测试只在本地运行，GitHub Actions 云端不会执行它。
+
 为了让 WebGPU 在无头环境可用，`playwright.config.ts` 使用新的 Chromium 无头模式，并
 加上 `--enable-unsafe-webgpu`、`--use-webgpu-adapter=swiftshader` 和
 `--enable-unsafe-swiftshader`。SwiftShader 是软件渲染器，保证 CI 上没有独立 GPU 也能
