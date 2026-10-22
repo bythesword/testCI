@@ -26,13 +26,20 @@ renderTriangle(canvas)
   .then(async ({ device, context }) => {
     canvas.dataset.rendered = 'true'
 
-    const stats = await readCanvasPixelStats(device, context, PIXEL_CHECK_TIMEOUT_MS)
-    if (stats === 'timeout') {
-      canvas.dataset.pixelCheck = 'timeout'
-      return
+    try {
+      const stats = await readCanvasPixelStats(device, context, PIXEL_CHECK_TIMEOUT_MS)
+      if (stats === 'timeout') {
+        canvas.dataset.pixelCheck = 'timeout'
+        return
+      }
+      canvas.dataset.pixelCheck = stats.colored > 1000 ? 'ok' : 'no-colored-pixels'
+      canvas.dataset.pixelStats = `colored=${stats.colored} white=${stats.white}`
+    } catch (error: unknown) {
+      // 像素读回失败不覆盖 data-rendered 的结论（渲染链路本身是成功的），
+      // 单独记到 pixel-check，避免把读回问题误报成渲染失败。
+      canvas.dataset.pixelCheck = 'error'
+      canvas.dataset.pixelError = error instanceof Error ? error.message : String(error)
     }
-    canvas.dataset.pixelCheck = stats.colored > 1000 ? 'ok' : 'no-colored-pixels'
-    canvas.dataset.pixelStats = `colored=${stats.colored} white=${stats.white}`
   })
   .catch((error: unknown) => {
     canvas.dataset.rendered = 'error'

@@ -16,14 +16,10 @@ test('renders the WebGPU triangle and verifies pixels via GPU readback', async (
   })
 })
 
-// 视觉快照只在本地运行：无头 Linux 的合成器不会把 WebGPU 画布内容画进截图
-// （已用 CI artifact 证实画布区域全白），CI 上的渲染验证由上一个测试完成。
+// 视觉快照在本地和 CI 都跑：CI 用 Xvfb 虚拟显示器跑有头 Chromium，
+// 合成器会把 WebGPU 画布内容画进截图（无头模式做不到，已用 artifact 证实）。
 test('matches the WebGPU triangle visual snapshot', async ({ page }) => {
-  test.skip(process.env.CI === 'true', '无头 Linux 截图抓不到 WebGPU 画布内容')
-
   await page.goto('/webgpu.html')
-  await expect(page.locator('#triangle')).toHaveAttribute('data-pixel-check', 'ok', {
-    timeout: 15000,
-  })
+  await expect(page.locator('#triangle')).toHaveAttribute('data-rendered', 'true')
   await expect(page).toHaveScreenshot('webgpu-triangle.png')
 })

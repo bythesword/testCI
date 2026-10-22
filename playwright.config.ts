@@ -17,6 +17,10 @@ export default defineConfig({
     // 使用新的 Chromium 无头模式。默认的 headless shell 里 WebGPU
     // 请求 adapter 会返回 null，换成 channel: 'chromium' 后才能跑 WebGPU。
     channel: 'chromium',
+    // 本地用无头模式；CI 用有头模式跑在 Xvfb 虚拟显示器上。无头 Linux 下
+    // WebGPU 画布内容既进不了截图（合成器不合成画布），GPU 读回也会报
+    // Vulkan 实例错误，只有有头模式两条链路才都可用。
+    headless: !process.env.CI,
     // 启动 Chromium 时追加的开关，用于开启 WebGPU 并用 SwiftShader
     // 做软件渲染，保证没有独立 GPU 的 CI/容器环境也能稳定运行。
     launchOptions: {

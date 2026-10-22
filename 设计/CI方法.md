@@ -75,8 +75,11 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
+      - name: Install Xvfb
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
       - name: Run end-to-end tests
-        run: npm run test:e2e
+        run: xvfb-run -a npm run test:e2e
 
       - name: Upload Playwright report on failure
         if: failure()
@@ -92,6 +95,7 @@ jobs:
 ### 关键点
 
 - 用 `npm ci` 而非 `npm install`：仓库有 `package-lock.json`，`npm ci` 按锁文件安装，结果可复现。
+- e2e 通过 `xvfb-run` 在 Xvfb 虚拟显示器上跑有头 Chromium：无头 Linux 下 WebGPU 画布内容进不了截图、GPU 读回也会报 Vulkan 实例错误，有头模式两条验证链路才都可用（详见 [WebGPU测试说明.md](WebGPU测试说明.md)）。
 - GitHub Actions 会自动设置 `CI=true`；`playwright.config.ts` 里 `reuseExistingServer: !process.env.CI` 据此在 CI 下不复用已有服务。
 - Linux runner 缺少浏览器运行所需的系统依赖，`npx playwright install --with-deps chromium` 一步装齐。
 - 失败时把 `playwright-report/` 与 `test-results/` 作为 artifact 上传，便于事后定位截图差异。
