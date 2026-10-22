@@ -1,6 +1,10 @@
 export const TRIANGLE_VERTEX_COUNT = 3
 export const TRIANGLE_FLOATS_PER_VERTEX = 5
 
+// 验证用离屏渲染的尺寸，与 webgpu.html 里 canvas 的 width/height 一致。
+export const TRIANGLE_RENDER_WIDTH = 400
+export const TRIANGLE_RENDER_HEIGHT = 300
+
 // 每个顶点按 (x, y, r, g, b) 交错存储：2 个位置分量 + 3 个颜色分量。
 export const TRIANGLE_VERTICES = new Float32Array([
   0.0, 0.8, 1.0, 0.0, 0.0, -0.8, -0.8, 0.0, 1.0, 0.0, 0.8, -0.8, 0.0, 0.0, 1.0,
@@ -62,9 +66,63 @@ export function createTrianglePipeline(
   })
 }
 
+function createTriangleVertexBuffer(device: GPUDevice): GPUBuffer {
+  const vertexBuffer = device.createBuffer({
+    size: TRIANGLE_VERTICES.byteLength,
+    usage: GPUBufferUsage.VERTEX,
+    mappedAtCreation: true,
+  })
+  new Float32Array(vertexBuffer.getMappedRange()).set(TRIANGLE_VERTICES)
+  vertexBuffer.unmap()
+  return vertexBuffer
+}
+
+function encodeTriangleDraw(
+  encoder: GPUCommandEncoder,
+  pipeline: GPURenderPipeline,
+  vertexBuffer: GPUBuffer,
+  colorAttachment: GPURenderPassColorAttachment,
+): void {
+  const renderPass = encoder.beginRenderPass({
+    colorAttachments: [colorAttachment],
+  })
+  renderPass.setPipeline(pipeline)
+  renderPass.setVertexBuffer(0, vertexBuffer)
+  renderPass.draw(TRIANGLE_VERTEX_COUNT)
+  renderPass.end()
+}
+
+// 把三角形渲染进一块离屏纹理并返回。离屏纹理不走画布的外部共享图路径，
+// 可以在无头 Linux 上安全地读回验证（画布纹理读回会报 Vulkan 实例错误）。
+export function renderTriangleToTexture(
+  device: GPUDevice,
+  format: GPUTextureFormat,
+  width: number,
+  height: number,
+): GPUTexture {
+  const texture = device.createTexture({
+    size: [width, height],
+    format,
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+  })
+  const pipeline = createTrianglePipeline(device, format)
+  const vertexBuffer = createTriangleVertexBuffer(device)
+
+  const encoder = device.createCommandEncoder()
+  encodeTriangleDraw(encoder, pipeline, vertexBuffer, {
+    view: texture.createView(),
+    clearValue: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
+    loadOp: 'clear',
+    storeOp: 'store',
+  })
+  device.queue.submit([encoder.finish()])
+  return texture
+}
+
 export interface RenderTriangleHandles {
   device: GPUDevice
   context: GPUCanvasContext
+  format: GPUTextureFormat
 }
 
 export async function renderTriangle(canvas: HTMLCanvasElement): Promise<RenderTriangleHandles> {
@@ -87,35 +145,20 @@ export async function renderTriangle(canvas: HTMLCanvasElement): Promise<RenderT
   context.configure({ device, format, alphaMode: 'opaque' })
 
   const pipeline = createTrianglePipeline(device, format)
-  const vertexBuffer = device.createBuffer({
-    size: TRIANGLE_VERTICES.byteLength,
-    usage: GPUBufferUsage.VERTEX,
-    mappedAtCreation: true,
-  })
-  new Float32Array(vertexBuffer.getMappedRange()).set(TRIANGLE_VERTICES)
-  vertexBuffer.unmap()
+  const vertexBuffer = createTriangleVertexBuffer(device)
 
   const commandEncoder = device.createCommandEncoder()
-  const renderPass = commandEncoder.beginRenderPass({
-    colorAttachments: [
-      {
-        view: context.getCurrentTexture().createView(),
-        clearValue: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
-        loadOp: 'clear',
-        storeOp: 'store',
-      },
-    ],
+  encodeTriangleDraw(commandEncoder, pipeline, vertexBuffer, {
+    view: context.getCurrentTexture().createView(),
+    clearValue: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
+    loadOp: 'clear',
+    storeOp: 'store',
   })
-  renderPass.setPipeline(pipeline)
-  renderPass.setVertexBuffer(0, vertexBuffer)
-  renderPass.draw(TRIANGLE_VERTEX_COUNT)
-  renderPass.end()
-
   device.queue.submit([commandEncoder.finish()])
-  return { device, context }
+  return { device, context, format }
 }
 
-// 画布纹理读回时的行字节数必须是 256 的倍数（WebGPU copyTextureToBuffer 的要求），
+// 纹理读回时的行字节数必须是 256 的倍数（WebGPU copyTextureToBuffer 的要求），
 // 按每像素 4 字节对宽度向上取整。
 export const PIXEL_READ_BYTES_PER_PIXEL = 4
 const PIXEL_READ_BYTES_PER_ROW_ALIGNMENT = 256
@@ -132,16 +175,15 @@ export interface CanvasPixelStats {
   white: number
 }
 
-// 把画布当前帧的纹理拷回内存并统计非白像素。无头 Linux 的截图抓不到
-// WebGPU 画布内容（合成器不会把它画进截图），但 GPU 读回不经过合成器，
-// 可以真正确认三角形有没有被画出来。SwiftShader 上 mapAsync 可能一直不
+// 把离屏纹理拷回内存并统计非白像素。无头 Linux 的截图抓不到 WebGPU 画布
+// 内容（合成器不会把它画进截图），但离屏纹理读回不经过画布和合成器，可以
+// 真正确认三角形有没有被画出来。SwiftShader 上 mapAsync 可能一直不
 // resolve，因此带超时保护，超时返回 'timeout'。
-export async function readCanvasPixelStats(
+export async function readBackTexturePixelStats(
   device: GPUDevice,
-  context: GPUCanvasContext,
+  texture: GPUTexture,
   timeoutMs: number,
 ): Promise<CanvasPixelStats | 'timeout'> {
-  const texture = context.getCurrentTexture()
   const bytesPerRow = alignedBytesPerRow(texture.width)
   const buffer = device.createBuffer({
     size: bytesPerRow * texture.height,
