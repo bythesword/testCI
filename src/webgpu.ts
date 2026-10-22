@@ -62,7 +62,12 @@ export function createTrianglePipeline(
   })
 }
 
-export async function renderTriangle(canvas: HTMLCanvasElement): Promise<void> {
+export interface RenderTriangleHandles {
+  device: GPUDevice
+  context: GPUCanvasContext
+}
+
+export async function renderTriangle(canvas: HTMLCanvasElement): Promise<RenderTriangleHandles> {
   if (!navigator.gpu) {
     throw new Error('当前浏览器不支持 WebGPU')
   }
@@ -107,4 +112,86 @@ export async function renderTriangle(canvas: HTMLCanvasElement): Promise<void> {
   renderPass.end()
 
   device.queue.submit([commandEncoder.finish()])
+  return { device, context }
+}
+
+// 画布纹理读回时的行字节数必须是 256 的倍数（WebGPU copyTextureToBuffer 的要求），
+// 按每像素 4 字节对宽度向上取整。
+export const PIXEL_READ_BYTES_PER_PIXEL = 4
+const PIXEL_READ_BYTES_PER_ROW_ALIGNMENT = 256
+
+export function alignedBytesPerRow(width: number): number {
+  return (
+    Math.ceil((width * PIXEL_READ_BYTES_PER_PIXEL) / PIXEL_READ_BYTES_PER_ROW_ALIGNMENT) *
+    PIXEL_READ_BYTES_PER_ROW_ALIGNMENT
+  )
+}
+
+export interface CanvasPixelStats {
+  colored: number
+  white: number
+}
+
+// 把画布当前帧的纹理拷回内存并统计非白像素。无头 Linux 的截图抓不到
+// WebGPU 画布内容（合成器不会把它画进截图），但 GPU 读回不经过合成器，
+// 可以真正确认三角形有没有被画出来。SwiftShader 上 mapAsync 可能一直不
+// resolve，因此带超时保护，超时返回 'timeout'。
+export async function readCanvasPixelStats(
+  device: GPUDevice,
+  context: GPUCanvasContext,
+  timeoutMs: number,
+): Promise<CanvasPixelStats | 'timeout'> {
+  const texture = context.getCurrentTexture()
+  const bytesPerRow = alignedBytesPerRow(texture.width)
+  const buffer = device.createBuffer({
+    size: bytesPerRow * texture.height,
+    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+  })
+
+  const encoder = device.createCommandEncoder()
+  encoder.copyTextureToBuffer({ texture }, { buffer, bytesPerRow, rowsPerImage: texture.height }, [
+    texture.width,
+    texture.height,
+  ])
+  device.queue.submit([encoder.finish()])
+
+  let timedOut = false
+  const mapPromise = buffer.mapAsync(GPUMapMode.READ)
+  mapPromise.catch(() => {
+    // 超时后 mapAsync 可能仍会 reject，这里吞掉避免 unhandled rejection。
+  })
+  await Promise.race([
+    mapPromise,
+    new Promise<void>((resolve) => {
+      setTimeout(() => {
+        timedOut = true
+        resolve()
+      }, timeoutMs)
+    }),
+  ])
+  if (timedOut) {
+    buffer.destroy()
+    return 'timeout'
+  }
+
+  const data = new Uint8Array(buffer.getMappedRange())
+  let colored = 0
+  let white = 0
+  for (let y = 0; y < texture.height; y++) {
+    const rowOffset = y * bytesPerRow
+    for (let x = 0; x < texture.width; x++) {
+      const offset = rowOffset + x * PIXEL_READ_BYTES_PER_PIXEL
+      const first = data[offset]
+      const second = data[offset + 1]
+      const third = data[offset + 2]
+      if (first > 240 && second > 240 && third > 240) {
+        white += 1
+      } else {
+        colored += 1
+      }
+    }
+  }
+  buffer.unmap()
+  buffer.destroy()
+  return { colored, white }
 }

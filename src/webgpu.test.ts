@@ -3,6 +3,7 @@ import {
   TRIANGLE_FLOATS_PER_VERTEX,
   TRIANGLE_VERTEX_COUNT,
   TRIANGLE_VERTICES,
+  alignedBytesPerRow,
   triangleShaderCode,
   triangleVertexBufferLayout,
 } from './webgpu'
@@ -70,5 +71,16 @@ describe('WebGPU triangle shader', () => {
     expect(triangleShaderCode).toContain('@vertex')
     expect(triangleShaderCode).toContain('@fragment')
     expect(triangleShaderCode).toContain('@builtin(position)')
+  })
+})
+
+// 画布纹理读回时 copyTextureToBuffer 要求 bytesPerRow 是 256 的倍数，
+// 这个换算函数是纯计算，可以在这里静态验证。
+describe('WebGPU canvas pixel readback layout', () => {
+  it('aligns bytesPerRow up to a multiple of 256', () => {
+    expect(alignedBytesPerRow(400)).toBe(1792)
+    expect(alignedBytesPerRow(1)).toBe(256)
+    expect(alignedBytesPerRow(256)).toBe(1024)
+    expect(alignedBytesPerRow(65)).toBe(512)
   })
 })

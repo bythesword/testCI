@@ -5,18 +5,18 @@ Playwright 端到端测试各自负责的范围。
 
 ## 测试相关的新增与变更
 
-| 文件                                                     | 作用                                                                           | 类型 |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------ | ---- |
-| `src/webgpu.ts`                                          | 抽出顶点数据、顶点布局、WGSL shader 和管线创建逻辑，便于在 Node 环境做静态测试 | 新增 |
-| `src/webgpu.test.ts`                                     | WebGPU 纯逻辑的 Vitest 单元测试                                                | 新增 |
-| `src/webgpu-page.ts`                                     | 页面挂载：创建 canvas、调用渲染、把渲染结果写进 canvas 的 `data-rendered` 属性 | 新增 |
-| `src/webgpu-style.css`                                   | WebGPU 示例专用样式：纯白底色、无边框，页面只有画布内容                        | 新增 |
-| `webgpu.html`                                            | WebGPU 示例页面入口                                                            | 新增 |
-| `tests/e2e/webgpu.spec.ts`                               | 在真实浏览器里跑 WebGPU，等待渲染信号并做视觉快照的 Playwright 测试            | 新增 |
-| `tests/e2e/__snapshots__/webgpu.spec.ts-snapshots/*.png` | WebGPU 页面视觉基线（本地生成，Windows 与 Linux 共用）                         | 新增 |
-| `playwright.config.ts`                                   | 增加 `channel: 'chromium'` 和 WebGPU/SwiftShader 启动参数                      | 变更 |
-| `package.json`、`tsconfig.json`                          | 增加 `@webgpu/types` 依赖并引入类型                                            | 变更 |
-| `vite.config.ts`                                         | 增加 `webgpu.html` 作为多页面构建入口                                          | 变更 |
+| 文件                                                     | 作用                                                                          | 类型 |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------- | ---- |
+| `src/webgpu.ts`                                          | 抽出顶点数据、顶点布局、WGSL shader、管线创建和画布读回逻辑，便于静态测试     | 新增 |
+| `src/webgpu.test.ts`                                     | WebGPU 纯逻辑的 Vitest 单元测试                                               | 新增 |
+| `src/webgpu-page.ts`                                     | 页面挂载：创建 canvas、调用渲染，把渲染与像素读回结果写进 canvas 的 data 属性 | 新增 |
+| `src/webgpu-style.css`                                   | WebGPU 示例专用样式：纯白底色、无边框，页面只有画布内容                       | 新增 |
+| `webgpu.html`                                            | WebGPU 示例页面入口                                                           | 新增 |
+| `tests/e2e/webgpu.spec.ts`                               | 在真实浏览器里跑 WebGPU，用 GPU 读回验证像素（CI 也跑），视觉快照仅本地       | 新增 |
+| `tests/e2e/__snapshots__/webgpu.spec.ts-snapshots/*.png` | WebGPU 页面视觉基线（本地生成，Windows 与 Linux 共用）                        | 新增 |
+| `playwright.config.ts`                                   | 增加 `channel: 'chromium'` 和 WebGPU/SwiftShader 启动参数                     | 变更 |
+| `package.json`、`tsconfig.json`                          | 增加 `@webgpu/types` 依赖并引入类型                                           | 变更 |
+| `vite.config.ts`                                         | 增加 `webgpu.html` 作为多页面构建入口                                         | 变更 |
 
 ## Vitest 单元测试负责哪些
 
@@ -36,21 +36,24 @@ Playwright 端到端测试各自负责的范围。
 
 ## Playwright 端到端测试负责哪些
 
-`tests/e2e/webgpu.spec.ts` 负责验证 WebGPU 在真实浏览器环境里真正跑起来：
+`tests/e2e/webgpu.spec.ts` 有两个用例：
 
 1. 通过 `webServer` 启动 Vite 开发服务器。
 2. 打开 `http://127.0.0.1:5173/webgpu.html`。
 3. 等待 canvas 出现 `data-rendered="true"`，确认 adapter、device、管线创建和 GPU
    queue 提交全部成功（页面不显示文字，渲染结果通过 data 属性暴露；失败时标记为
    `data-rendered="error"`，原因放在 `data-error` 里）。
-4. 用 `toHaveScreenshot('webgpu-triangle.png')` 对整页做视觉快照，确认画布上真的
-   出现了彩色三角形，而不是空白。
+4. GPU 读回像素断言（本地和 CI 都跑）：等待 `data-pixel-check="ok"`。页面渲染完成后
+   会把画布纹理拷回内存统计非白像素——读回走 GPU 管线、不经过合成器，因此无头
+   Linux 也能真正确认三角形被画了出来；超时标记为 `timeout`、只有白底标记为
+   `no-colored-pixels`，统计详情放在 `data-pixel-stats`。
+5. 视觉快照断言（只在本地跑）：用 `toHaveScreenshot('webgpu-triangle.png')` 对整页
+   做视觉快照。无头 Linux 的合成器不会把 WebGPU 画布内容画进截图（见下一节），
+   所以 CI 上跳过该用例，渲染验证由 GPU 读回完成。
 
-该测试在本地和 GitHub Actions 的 CI 环境都会执行。为了让 CI 截图可验证，示例页面
-刻意简化成“纯白背景 + 一块 canvas”：去掉了标题、状态文字、返回链接和卡片边框，也
-去掉了深浅不一的底色，页面只剩单一合成层。这样截图里只有 WebGPU 渲染的画布内容，
-不再受系统字体渲染、边框和多重底色的干扰，便于定位无头 Linux 下画布内容是否被
-正确捕获。
+为了让 CI 截图可验证，示例页面刻意简化成“纯白背景 + 一块 canvas”：去掉了标题、
+状态文字、返回链接和卡片边框，也去掉了深浅不一的底色，页面只剩单一合成层。这样
+截图里只有 WebGPU 渲染的画布内容，不再受系统字体渲染、边框和多重底色的干扰。
 
 为了让 WebGPU 在无头环境可用，`playwright.config.ts` 使用新的 Chromium 无头模式，并
 加上 `--enable-unsafe-webgpu`、`--use-webgpu-adapter=swiftshader` 和
@@ -58,33 +61,35 @@ Playwright 端到端测试各自负责的范围。
 稳定完成渲染；同一 Chromium 版本下它的光栅化输出在 Windows 与 Linux 上应当一致，
 因此视觉基线可以跨平台共用。
 
-## CI 首次失败与修复
+## CI 截图问题的定位过程与最终方案
 
-第一次在 GitHub Actions 上执行该测试时，`data-rendered="true"` 正常出现（渲染链路
-成功），但视觉快照失败：37,364 个像素不同，下载 artifact 分析发现 Linux 截图中画布
-区域是全白——三角形完全没有进入截图，即使页面已简化成纯白背景也一样。这说明问题
-不在文字、边框或底色，而是无头 Linux 的合成器不会把 WebGPU 画布内容画进截图。
+第一次在 GitHub Actions 上执行视觉快照断言时，`data-rendered="true"` 正常出现
+（渲染链路成功），但快照失败：37,364 个像素不同，下载 artifact 分析发现 Linux
+截图中画布区域是全白——三角形完全没有进入截图，即使页面已简化成纯白背景也一样。
+这说明问题不在文字、边框或底色，而是无头 Linux 的合成器不会把 WebGPU 画布内容
+画进截图。
 
-修复方式是给 Chromium 追加两个启动开关：
+随后尝试给 Chromium 追加 `--run-all-compositor-stages-before-draw` 与
+`--disable-frame-rate-limit` 两个启动开关，CI 结果与之前完全一致（仍是 37,364 个
+像素差异），说明合成器开关也无效，问题出得更深。
 
-- `--run-all-compositor-stages-before-draw`：每次绘制前强制跑完合成器全部阶段，
-  让已提交的画布帧在截图时被真正合成进画面；
-- `--disable-frame-rate-limit`：无头环境的合成帧不被节流，避免渲染结果一直等不到
-  下一次合成。
-
-这两个开关对静态页面（计数器等）的截图输出没有影响，本地基线无需重生成。
+最终方案是绕开合成器：页面渲染完成后把画布纹理通过 `copyTextureToBuffer` 拷回
+内存、`mapAsync` 读回并统计非白像素，把结果写进 `data-pixel-check`。GPU 读回直接
+读取画布纹理内容，不依赖截图链路，在无头 Linux 上同样能验证三角形确实被画出来。
+因此 CI 上的渲染验证由 GPU 读回断言完成，视觉快照只在本地运行；`mapAsync` 带超时
+保护（SwiftShader 上曾出现回调不返回的情况），超时会在属性值里留下明确标记。
 
 ## 两层测试的分工
 
-| 关注点              | Vitest 单测            | Playwright 端到端测试                   |
-| ------------------- | ---------------------- | --------------------------------------- |
-| 运行环境            | Node，无浏览器、无 GPU | Chromium + SwiftShader                  |
-| 顶点数据、颜色范围  | 负责                   | 不直接断言                              |
-| 顶点布局、stride    | 负责                   | 不直接断言                              |
-| shader 关键标记     | 负责静态字符串检查     | 负责实际编译和运行                      |
-| adapter/device 申请 | 不负责                 | 负责                                    |
-| 画布最终渲染结果    | 不负责                 | 负责（`data-rendered` 信号 + 视觉快照） |
-| 错误状态展示        | 不负责                 | 负责（`data-rendered="error"` 标记）    |
+| 关注点              | Vitest 单测            | Playwright 端到端测试                    |
+| ------------------- | ---------------------- | ---------------------------------------- |
+| 运行环境            | Node，无浏览器、无 GPU | Chromium + SwiftShader                   |
+| 顶点数据、颜色范围  | 负责                   | 不直接断言                               |
+| 顶点布局、stride    | 负责                   | 不直接断言                               |
+| shader 关键标记     | 负责静态字符串检查     | 负责实际编译和运行                       |
+| adapter/device 申请 | 不负责                 | 负责                                     |
+| 画布最终渲染结果    | 不负责                 | 负责（GPU 读回像素断言；视觉快照仅本地） |
+| 错误状态展示        | 不负责                 | 负责（`data-rendered="error"` 标记）     |
 
 简单说：单元测试回答“数据结构和 shader 文本对不对”，端到端测试回答“在真实浏览器里
 三角形有没有成功画出来”。
