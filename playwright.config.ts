@@ -19,11 +19,16 @@ export default defineConfig({
     channel: 'chromium',
     // 启动 Chromium 时追加的开关，用于开启 WebGPU 并用 SwiftShader
     // 做软件渲染，保证没有独立 GPU 的 CI/容器环境也能稳定运行。
+    // --run-all-compositor-stages-before-draw 强制每次绘制前跑完合成器
+    // 全部阶段，否则无头 Linux 截图中 WebGPU 画布内容会丢失（只剩白底）；
+    // --disable-frame-rate-limit 让无头环境的合成帧不被节流。
     launchOptions: {
       args: [
         '--enable-unsafe-webgpu',
         '--use-webgpu-adapter=swiftshader',
         '--enable-unsafe-swiftshader',
+        '--run-all-compositor-stages-before-draw',
+        '--disable-frame-rate-limit',
       ],
     },
     // 固定视口尺寸，确保每次截图大小一致、快照可比对。
