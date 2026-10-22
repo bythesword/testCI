@@ -125,7 +125,9 @@ export interface RenderTriangleHandles {
   format: GPUTextureFormat
 }
 
-export async function renderTriangle(canvas: HTMLCanvasElement): Promise<RenderTriangleHandles> {
+// 申请 adapter 与 device，不涉及画布。页面先拿到 device 做离屏验证，
+// 之后再渲染到画布——无头 Linux 上画布渲染会销毁设备（见 renderTriangleToCanvas）。
+export async function requestWebGpuDevice(): Promise<GPUDevice> {
   if (!navigator.gpu) {
     throw new Error('当前浏览器不支持 WebGPU')
   }
@@ -135,7 +137,16 @@ export async function renderTriangle(canvas: HTMLCanvasElement): Promise<RenderT
     throw new Error('没有可用的 WebGPU adapter')
   }
 
-  const device = await adapter.requestDevice()
+  return adapter.requestDevice()
+}
+
+// 把三角形渲染到指定 canvas 并返回画布纹理格式。无头 Linux 的合成器没有
+// WebGPU 画布的 backing factory，画布渲染之后设备会被浏览器销毁，因此所有
+// 依赖读回的验证必须先于画布渲染完成（见 webgpu-page.ts 的调用顺序）。
+export function renderTriangleToCanvas(
+  device: GPUDevice,
+  canvas: HTMLCanvasElement,
+): GPUTextureFormat {
   const context = canvas.getContext('webgpu')
   if (!context) {
     throw new Error('无法获取 WebGPU 渲染上下文')
@@ -155,6 +166,13 @@ export async function renderTriangle(canvas: HTMLCanvasElement): Promise<RenderT
     storeOp: 'store',
   })
   device.queue.submit([commandEncoder.finish()])
+  return format
+}
+
+export async function renderTriangle(canvas: HTMLCanvasElement): Promise<RenderTriangleHandles> {
+  const device = await requestWebGpuDevice()
+  const format = renderTriangleToCanvas(device, canvas)
+  const context = canvas.getContext('webgpu')!
   return { device, context, format }
 }
 

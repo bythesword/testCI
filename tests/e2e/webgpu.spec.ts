@@ -7,20 +7,23 @@ import { expect, test } from '@playwright/test'
 // 离屏纹理读回既不经过合成器，也不走画布的外部共享图路径（无头 Linux 上
 // 画布纹理读回会报 Vulkan 实例错误），因此无头 CI 环境也能用它验证渲染结果。
 test('renders the WebGPU triangle and verifies pixels via GPU readback', async ({ page }) => {
+  test.setTimeout(120000)
   await page.goto('/webgpu.html')
   await expect(page.locator('#triangle')).toBeVisible()
-
-  await expect(page.locator('#triangle')).toHaveAttribute('data-rendered', 'true')
 
   // 先等整条探针序列跑完（每个探针最多 10s），失败时日志里能看到全部
   // data-* 属性，便于定位无头 Linux CI 上读回失效的层级。
   await expect(page.locator('#triangle')).toHaveAttribute('data-probes-done', 'true', {
-    timeout: 60000,
+    timeout: 90000,
   })
 
+  // 像素验证在画布渲染之前完成：无头 Linux CI 上画布渲染会销毁设备，
+  // 之后任何 mapAsync 都失败（见 webgpu-page.ts 的调用顺序说明）。
   await expect(page.locator('#triangle')).toHaveAttribute('data-pixel-check', 'ok', {
     timeout: 15000,
   })
+
+  await expect(page.locator('#triangle')).toHaveAttribute('data-rendered', 'true')
 })
 
 // 视觉快照只在本地跑：无头 Linux 的合成器不会把 WebGPU 画布内容画进截图

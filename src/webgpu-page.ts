@@ -5,8 +5,9 @@ import {
   probeBufferRoundtrip,
   probeComputeExecution,
   readBackTexturePixelStats,
-  renderTriangle,
+  renderTriangleToCanvas,
   renderTriangleToTexture,
+  requestWebGpuDevice,
 } from './webgpu.ts'
 
 // WebGPU 示例页面刻意保持极简：纯白底色 + 一块 canvas，没有文字、边框和
@@ -31,16 +32,18 @@ function errorMessage(error: unknown): string {
 // data-rendered="true" 表示渲染链路全部成功，data-rendered="error" 表示失败，
 // 失败原因放在 data-error 里便于排查。
 //
-// 渲染完成后按序跑一串读回探针，每一步的结果都记进 data 属性，用于定位
-// 无头 Linux CI 上 GPU→CPU 读回在哪一层失效：
-// - data-probe-buffer1 / data-probe-buffer2：writeBuffer + mapAsync 往返；
-// - data-probe-compute：compute shader 写 storage buffer 后 mapAsync 读回；
-// - data-pixel-check：三角形画进离屏纹理后拷回内存统计非白像素。
-// 设备丢失时 data-device-lost 记录原因。全部跑完后 data-probes-done="true"。
-renderTriangle(canvas)
-  .then(async ({ device, format }) => {
-    canvas.dataset.rendered = 'true'
-
+// 调用顺序很关键：无头 Linux CI 上，画布渲染提交后浏览器会销毁 WebGPU 设备
+// （合成器没有 WebGPU 画布的 backing factory），之后任何 mapAsync 都报
+// "A valid external Instance reference no longer exists"。因此所有依赖读回的
+// 验证都放在画布渲染之前：
+//   1. 纯缓冲区往返探针（data-probe-buffer1）
+//   2. compute 执行探针（data-probe-compute）
+//   3. 三角形画进离屏纹理后读回统计非白像素（data-pixel-check）
+//   4. 渲染到画布（data-rendered，供本地快照与人工查看）
+//   5. 画布渲染后的缓冲区往返探针（data-probe-buffer2），确认设备是否已销毁
+// 设备丢失时 data-device-lost 记录原因，全部跑完后 data-probes-done="true"。
+requestWebGpuDevice()
+  .then(async (device) => {
     void device.lost.then((info) => {
       canvas.dataset.deviceLost = `${info.reason}: ${info.message}`
     })
@@ -62,6 +65,7 @@ renderTriangle(canvas)
     }
 
     try {
+      const format = navigator.gpu.getPreferredCanvasFormat()
       const texture = renderTriangleToTexture(
         device,
         format,
@@ -85,6 +89,14 @@ renderTriangle(canvas)
     }
 
     try {
+      renderTriangleToCanvas(device, canvas)
+      canvas.dataset.rendered = 'true'
+    } catch (error: unknown) {
+      canvas.dataset.rendered = 'error'
+      canvas.dataset.error = errorMessage(error)
+    }
+
+    try {
       record('probeBuffer2', await probeBufferRoundtrip(device, PIXEL_CHECK_TIMEOUT_MS))
     } catch (error: unknown) {
       record('probeBuffer2', errorMessage(error))
@@ -95,4 +107,5 @@ renderTriangle(canvas)
   .catch((error: unknown) => {
     canvas.dataset.rendered = 'error'
     canvas.dataset.error = errorMessage(error)
+    canvas.dataset.probesDone = 'true'
   })
