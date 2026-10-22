@@ -42,11 +42,15 @@ Playwright 端到端测试各自负责的范围。
 2. 打开 `http://127.0.0.1:5173/webgpu.html`。
 3. 等待 canvas 出现 `data-rendered="true"`，确认 adapter、device、管线创建和 GPU
    queue 提交全部成功（页面不显示文字，渲染结果通过 data 属性暴露；失败时标记为
-   `data-rendered="error"`，原因放在 `data-error` 里）。
-4. 离屏纹理读回断言：等待 `data-pixel-check="ok"`。页面渲染完成后会把三角形再画进
-   一块离屏纹理并拷回内存统计非白像素——读回不经过合成器，也不走画布的外部共享图
-   路径；超时标记为 `timeout`、只有白底标记为 `no-colored-pixels`、读回报错标记为
-   `error`（原因在 `data-pixel-error`），统计详情放在 `data-pixel-stats`。
+   `data-rendered="error"`，原因放在 `data-error` 里）。画布渲染发生在读回验证
+   之后（原因见下文调用顺序说明）。
+4. 离屏纹理读回断言：等待 `data-pixel-check="ok"`。页面把三角形画进一块离屏纹理
+   并拷回内存统计非白像素——这一步在画布渲染**之前**执行（无头 Linux 上画布渲染
+   会销毁设备，见下文）；读回不经过合成器也不依赖画布，超时标记为 `timeout`、只有
+   白底标记为 `no-colored-pixels`、读回报错标记为 `error`（原因在
+   `data-pixel-error`），统计详情放在 `data-pixel-stats`。页面还会跑几个读回探针
+   （`data-probe-buffer1`、`data-probe-compute`、`data-probe-buffer2`），失败时
+   日志里能看到各层结果便于定位；设备丢失时 `data-device-lost` 记录原因。
 5. 视觉快照断言：用 `toHaveScreenshot('webgpu-triangle.png')` 对整页做视觉快照，
    确认画布上真的出现了彩色三角形。此用例只在本地执行，CI 上跳过（原因见下文）。
 
@@ -75,8 +79,7 @@ Playwright 端到端测试各自负责的范围。
 接着尝试绕开合成器：页面渲染完成后把画布纹理通过 `copyTextureToBuffer` 拷回内存、
 `mapAsync` 读回并统计非白像素。结果在无头 Linux 上 `mapAsync` 直接报错
 （"Failed to execute 'mapAsync' on 'GPUBuffer': A valid external Instance
-reference..."）。该错误来自画布纹理的外部共享图（SharedImage）路径，普通
-缓冲区/离屏纹理的读回不受影响；它也解释了历史上 `onSubmittedWorkDone` 回调
+reference no longer exists."）；它也解释了历史上 `onSubmittedWorkDone` 回调
 不返回的现象。
 
 又试了让 CI 跑有头模式：工作流安装 Xvfb，用 `xvfb-run -a npm run test:e2e` 在
@@ -84,11 +87,22 @@ reference..."）。该错误来自画布纹理的外部共享图（SharedImage�
 （`data-rendered="error"`、`data-error="没有可用的 WebGPU adapter"`），渲染根本
 跑不起来，截图也随之失败。
 
-最终方案是“离屏纹理读回”：渲染链路成功后，把三角形再画进一块离屏纹理
-（`RENDER_ATTACHMENT | COPY_SRC`）并读回内存统计非白像素。离屏纹理不走画布的
-外部共享图路径，`mapAsync` 可以正常完成；读回也不经过合成器，不受截图抓不到
-画布内容的影响。因此 CI 保持无头模式（adapter 可用），视觉快照用例只在本地跑
-（`test.skip(process.env.CI === 'true')`），CI 上的渲染验证由离屏读回断言负责。
+回到无头模式后改为“离屏纹理读回”：把三角形画进离屏纹理
+（`RENDER_ATTACHMENT | COPY_SRC`）再读回，完全避开画布的共享图路径。结果 CI 上
+仍是同一个错误，说明问题不在画布路径本身。于是在页面上加了一串读回探针（纯
+缓冲区往返、compute shader 执行、离屏纹理读回），发现**所有** `mapAsync` 都报
+同一个错误，且 `device.lost` 的 reason 是 `destroyed`——设备被销毁了。结合社区
+报告（无头 SwiftShader 缺少 WebGPU 画布的 backing factory），定位到真正的元凶：
+**无头 Linux 上，把 WebGPU 内容渲染到画布这一动作本身会销毁设备**，之后任何
+GPU→CPU 读回都失败。
+
+最终方案因此确定：把依赖读回的验证全部挪到画布渲染**之前**执行——先做纯缓冲区
+往返探针、compute 执行探针，然后把三角形画进离屏纹理读回统计非白像素
+（`data-pixel-check`），全部完成后再渲染到画布（`data-rendered`，供本地快照和
+人工查看）；画布渲染之后的缓冲区探针（`data-probe-buffer2`）还会顺带确认设备
+是否被销毁。CI 保持无头模式（adapter 可用），视觉快照用例只在本地跑
+（`test.skip(process.env.CI === 'true')`），CI 上的渲染验证由画布渲染前的离屏
+读回断言负责，整条 CI 现已通过。
 
 ## 两层测试的分工
 

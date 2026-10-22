@@ -2,10 +2,10 @@ import { expect, test } from '@playwright/test'
 
 // WebGPU 示例页面已刻意简化成“纯白背景 + 一块 canvas”，没有文字、边框和
 // 其他底色。渲染完成后页面会把渲染结果写进 canvas 的 data 属性：
-// - data-rendered="true"：adapter、device、管线创建和 queue 提交全部成功；
-// - data-pixel-check="ok"：页面把三角形画进离屏纹理再读回内存，确认真的画了出来。
-// 离屏纹理读回既不经过合成器，也不走画布的外部共享图路径（无头 Linux 上
-// 画布纹理读回会报 Vulkan 实例错误），因此无头 CI 环境也能用它验证渲染结果。
+// - data-pixel-check="ok"：页面把三角形画进离屏纹理再读回内存，确认真的画了出来；
+// - data-rendered="true"：adapter、device、管线创建和 queue 提交全部成功。
+// 离屏纹理读回发生在画布渲染之前：无头 Linux 上画布渲染会销毁 WebGPU 设备，
+// 之后任何 mapAsync 都报 Vulkan 实例错误，因此验证必须先于画布渲染完成。
 test('renders the WebGPU triangle and verifies pixels via GPU readback', async ({ page }) => {
   test.setTimeout(120000)
   await page.goto('/webgpu.html')
