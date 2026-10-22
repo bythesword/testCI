@@ -1,0 +1,10 @@
+/* WebGPU 示例专用样式：纯白底色、无边框、无多余元素，
+   让页面截图里只有 WebGPU 渲染的画布内容。 */
+body {
+  margin: 0;
+  background: #ffffff;
+}
+
+canvas {
+  display: block;
+}

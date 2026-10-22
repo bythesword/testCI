@@ -92,8 +92,3 @@ canvas {
   border: 1px solid #e5e5ea;
   border-radius: 8px;
 }
-
-#webgpu-status {
-  min-height: 1.5em;
-  margin: 0;
-}
