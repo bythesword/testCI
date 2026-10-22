@@ -12,6 +12,12 @@ test('renders the WebGPU triangle and verifies pixels via GPU readback', async (
 
   await expect(page.locator('#triangle')).toHaveAttribute('data-rendered', 'true')
 
+  // 先等整条探针序列跑完（每个探针最多 10s），失败时日志里能看到全部
+  // data-* 属性，便于定位无头 Linux CI 上读回失效的层级。
+  await expect(page.locator('#triangle')).toHaveAttribute('data-probes-done', 'true', {
+    timeout: 60000,
+  })
+
   await expect(page.locator('#triangle')).toHaveAttribute('data-pixel-check', 'ok', {
     timeout: 15000,
   })

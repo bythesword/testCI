@@ -2,6 +2,8 @@ import './webgpu-style.css'
 import {
   TRIANGLE_RENDER_HEIGHT,
   TRIANGLE_RENDER_WIDTH,
+  probeBufferRoundtrip,
+  probeComputeExecution,
   readBackTexturePixelStats,
   renderTriangle,
   renderTriangleToTexture,
@@ -18,24 +20,48 @@ app.innerHTML = `
 
 const canvas = document.querySelector<HTMLCanvasElement>('#triangle')!
 
-// 纹理读回的超时时间。SwiftShader 上的 mapAsync 可能一直不 resolve，
-// 超时后把 data-pixel-check 标记为 timeout，测试失败时能从属性值看出原因。
+// 读回操作的单次超时时间。SwiftShader 上的 mapAsync 可能一直不 resolve。
 const PIXEL_CHECK_TIMEOUT_MS = 10000
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
 
 // 页面上不显示任何文字，渲染结果通过 data 属性暴露给测试：
 // data-rendered="true" 表示渲染链路全部成功，data-rendered="error" 表示失败，
-// 失败原因放在 data-error 里便于排查。渲染完成后还会把三角形再画进一块
-// 离屏纹理并读回内存统计非白像素：data-pixel-check="ok" 表示三角形确实被画
-// 了出来（不经过画布外部共享图和合成器，无头 Linux 也能验证），"timeout"
-// 表示读回超时，"no-colored-pixels" 表示纹理只有白底，统计详情放在
-// data-pixel-stats。
+// 失败原因放在 data-error 里便于排查。
+//
+// 渲染完成后按序跑一串读回探针，每一步的结果都记进 data 属性，用于定位
+// 无头 Linux CI 上 GPU→CPU 读回在哪一层失效：
+// - data-probe-buffer1 / data-probe-buffer2：writeBuffer + mapAsync 往返；
+// - data-probe-compute：compute shader 写 storage buffer 后 mapAsync 读回；
+// - data-pixel-check：三角形画进离屏纹理后拷回内存统计非白像素。
+// 设备丢失时 data-device-lost 记录原因。全部跑完后 data-probes-done="true"。
 renderTriangle(canvas)
   .then(async ({ device, format }) => {
     canvas.dataset.rendered = 'true'
 
+    void device.lost.then((info) => {
+      canvas.dataset.deviceLost = `${info.reason}: ${info.message}`
+    })
+
+    const record = (name: string, value: string) => {
+      canvas.dataset[name] = value
+    }
+
     try {
-      // 画布纹理的读回在无头 Linux 上会报 Vulkan 实例错误（外部共享图路径
-      // 不可用），离屏纹理不经过那条路径，可以安全读回。
+      record('probeBuffer1', await probeBufferRoundtrip(device, PIXEL_CHECK_TIMEOUT_MS))
+    } catch (error: unknown) {
+      record('probeBuffer1', errorMessage(error))
+    }
+
+    try {
+      record('probeCompute', await probeComputeExecution(device, PIXEL_CHECK_TIMEOUT_MS))
+    } catch (error: unknown) {
+      record('probeCompute', errorMessage(error))
+    }
+
+    try {
       const texture = renderTriangleToTexture(
         device,
         format,
@@ -46,21 +72,27 @@ renderTriangle(canvas)
         const stats = await readBackTexturePixelStats(device, texture, PIXEL_CHECK_TIMEOUT_MS)
         if (stats === 'timeout') {
           canvas.dataset.pixelCheck = 'timeout'
-          return
+        } else {
+          canvas.dataset.pixelCheck = stats.colored > 1000 ? 'ok' : 'no-colored-pixels'
+          canvas.dataset.pixelStats = `colored=${stats.colored} white=${stats.white}`
         }
-        canvas.dataset.pixelCheck = stats.colored > 1000 ? 'ok' : 'no-colored-pixels'
-        canvas.dataset.pixelStats = `colored=${stats.colored} white=${stats.white}`
       } finally {
         texture.destroy()
       }
     } catch (error: unknown) {
-      // 像素读回失败不覆盖 data-rendered 的结论（渲染链路本身是成功的），
-      // 单独记到 pixel-check，避免把读回问题误报成渲染失败。
       canvas.dataset.pixelCheck = 'error'
-      canvas.dataset.pixelError = error instanceof Error ? error.message : String(error)
+      canvas.dataset.pixelError = errorMessage(error)
     }
+
+    try {
+      record('probeBuffer2', await probeBufferRoundtrip(device, PIXEL_CHECK_TIMEOUT_MS))
+    } catch (error: unknown) {
+      record('probeBuffer2', errorMessage(error))
+    }
+
+    canvas.dataset.probesDone = 'true'
   })
   .catch((error: unknown) => {
     canvas.dataset.rendered = 'error'
-    canvas.dataset.error = error instanceof Error ? error.message : String(error)
+    canvas.dataset.error = errorMessage(error)
   })

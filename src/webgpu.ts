@@ -170,6 +170,29 @@ export function alignedBytesPerRow(width: number): number {
   )
 }
 
+// 带超时的 mapAsync：SwiftShader 上可能一直不 resolve，超时返回 'timeout'。
+// mapAsync 本身 reject（如无头 Linux 的设备丢失错误）时原样抛出，由调用方记录。
+export async function mapReadableBufferWithTimeout(
+  buffer: GPUBuffer,
+  timeoutMs: number,
+): Promise<'ok' | 'timeout'> {
+  let timedOut = false
+  const mapPromise = buffer.mapAsync(GPUMapMode.READ)
+  mapPromise.catch(() => {
+    // 超时后 mapAsync 可能仍会 reject，这里吞掉避免 unhandled rejection。
+  })
+  await Promise.race([
+    mapPromise,
+    new Promise<void>((resolve) => {
+      setTimeout(() => {
+        timedOut = true
+        resolve()
+      }, timeoutMs)
+    }),
+  ])
+  return timedOut ? 'timeout' : 'ok'
+}
+
 export interface CanvasPixelStats {
   colored: number
   white: number
@@ -197,21 +220,8 @@ export async function readBackTexturePixelStats(
   ])
   device.queue.submit([encoder.finish()])
 
-  let timedOut = false
-  const mapPromise = buffer.mapAsync(GPUMapMode.READ)
-  mapPromise.catch(() => {
-    // 超时后 mapAsync 可能仍会 reject，这里吞掉避免 unhandled rejection。
-  })
-  await Promise.race([
-    mapPromise,
-    new Promise<void>((resolve) => {
-      setTimeout(() => {
-        timedOut = true
-        resolve()
-      }, timeoutMs)
-    }),
-  ])
-  if (timedOut) {
+  const mapResult = await mapReadableBufferWithTimeout(buffer, timeoutMs)
+  if (mapResult === 'timeout') {
     buffer.destroy()
     return 'timeout'
   }
@@ -236,4 +246,77 @@ export async function readBackTexturePixelStats(
   buffer.unmap()
   buffer.destroy()
   return { colored, white }
+}
+
+// 诊断探针一：最基础的缓冲区往返——writeBuffer 写入已知值再 mapAsync 读回
+// 核对。不涉及纹理、渲染管线和画布，用来判断无头 Linux CI 上 GPU→CPU 读回
+// 本身是否可用。
+export async function probeBufferRoundtrip(
+  device: GPUDevice,
+  timeoutMs: number,
+): Promise<'ok' | 'wrong-value' | 'timeout'> {
+  const buffer = device.createBuffer({
+    size: 4,
+    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+  })
+  device.queue.writeBuffer(buffer, 0, new Uint32Array([0x01020304]))
+
+  const mapResult = await mapReadableBufferWithTimeout(buffer, timeoutMs)
+  if (mapResult === 'timeout') {
+    buffer.destroy()
+    return 'timeout'
+  }
+  const value = new Uint32Array(buffer.getMappedRange())[0]
+  buffer.unmap()
+  buffer.destroy()
+  return value === 0x01020304 ? 'ok' : 'wrong-value'
+}
+
+const computeProbeShaderCode = `
+@group(0) @binding(0) var<storage, read_write> result: array<u32>;
+
+@compute @workgroup_size(1)
+fn main() {
+  result[0] = 1u + 2u;
+}
+`
+
+// 诊断探针二：compute shader 把 1+2 写进 storage buffer 再 mapAsync 读回核对。
+// 这条链路验证 shader 编译、管线创建、GPU 实际执行和缓冲区读回，但不涉及
+// 纹理与画布，用来和纹理读回对比，定位无头 Linux CI 上失效的层级。
+export async function probeComputeExecution(
+  device: GPUDevice,
+  timeoutMs: number,
+): Promise<'ok' | 'wrong-value' | 'timeout'> {
+  const buffer = device.createBuffer({
+    size: 4,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.MAP_READ,
+  })
+  const module = device.createShaderModule({ code: computeProbeShaderCode })
+  const pipeline = device.createComputePipeline({
+    layout: 'auto',
+    compute: { module, entryPoint: 'main' },
+  })
+  const bindGroup = device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [{ binding: 0, resource: { buffer } }],
+  })
+
+  const encoder = device.createCommandEncoder()
+  const pass = encoder.beginComputePass()
+  pass.setPipeline(pipeline)
+  pass.setBindGroup(0, bindGroup)
+  pass.dispatchWorkgroups(1)
+  pass.end()
+  device.queue.submit([encoder.finish()])
+
+  const mapResult = await mapReadableBufferWithTimeout(buffer, timeoutMs)
+  if (mapResult === 'timeout') {
+    buffer.destroy()
+    return 'timeout'
+  }
+  const value = new Uint32Array(buffer.getMappedRange())[0]
+  buffer.unmap()
+  buffer.destroy()
+  return value === 3 ? 'ok' : 'wrong-value'
 }
