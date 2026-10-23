@@ -1,10 +1,14 @@
 import './webgpu-style.css'
+import goldenUrl from './webgpu-triangle-golden.png'
 import {
+  MAX_DIFF_PIXEL_RATIO,
   TRIANGLE_RENDER_HEIGHT,
   TRIANGLE_RENDER_WIDTH,
+  countWhiteAndColoredPixels,
+  diffRatioVsRgbaReference,
   probeBufferRoundtrip,
   probeComputeExecution,
-  readBackTexturePixelStats,
+  readBackTexturePixels,
   renderTriangleToCanvas,
   renderTriangleToTexture,
   requestWebGpuDevice,
@@ -26,6 +30,30 @@ const PIXEL_CHECK_TIMEOUT_MS = 10000
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+// 把基准 PNG 解码成 RGBA 像素。基准图由 scripts/generate-webgpu-golden.mjs
+// 用同一套离屏渲染路径在本地生成并提交在仓库里，CI 上把读回的像素与它
+// 逐像素比对，等价于视觉快照比对（带容差）。
+async function decodePngToRgba(url: string): Promise<Uint8ClampedArray> {
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new Error(`加载基准图失败: HTTP ${response.status}`)
+  }
+  const bitmap = await createImageBitmap(await response.blob())
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = bitmap.width
+    canvas.height = bitmap.height
+    const context = canvas.getContext('2d')
+    if (!context) {
+      throw new Error('无法创建基准图解码画布')
+    }
+    context.drawImage(bitmap, 0, 0)
+    return context.getImageData(0, 0, bitmap.width, bitmap.height).data
+  } finally {
+    bitmap.close()
+  }
 }
 
 // 页面上不显示任何文字，渲染结果通过 data 属性暴露给测试：
@@ -73,13 +101,29 @@ requestWebGpuDevice()
         TRIANGLE_RENDER_HEIGHT,
       )
       try {
-        const stats = await readBackTexturePixelStats(device, texture, PIXEL_CHECK_TIMEOUT_MS)
-        if (stats === 'timeout') {
+        const pixels = await readBackTexturePixels(device, texture, PIXEL_CHECK_TIMEOUT_MS)
+        if (pixels === 'timeout') {
           canvas.dataset.pixelCheck = 'timeout'
-        } else {
-          canvas.dataset.pixelCheck = stats.colored > 1000 ? 'ok' : 'no-colored-pixels'
-          canvas.dataset.pixelStats = `colored=${stats.colored} white=${stats.white}`
+          return
         }
+        const { colored, white } = countWhiteAndColoredPixels(pixels, TRIANGLE_RENDER_WIDTH)
+        const golden = await decodePngToRgba(goldenUrl)
+        if (golden.length !== TRIANGLE_RENDER_WIDTH * TRIANGLE_RENDER_HEIGHT * 4) {
+          throw new Error(`基准图尺寸不匹配: ${golden.length / 4} 像素`)
+        }
+        if (colored <= 1000) {
+          canvas.dataset.pixelCheck = 'no-colored-pixels'
+          canvas.dataset.pixelStats = `colored=${colored} white=${white}`
+          return
+        }
+        const diff = diffRatioVsRgbaReference(
+          pixels,
+          golden,
+          TRIANGLE_RENDER_WIDTH,
+          TRIANGLE_RENDER_HEIGHT,
+        )
+        canvas.dataset.pixelCheck = diff.diffRatio <= MAX_DIFF_PIXEL_RATIO ? 'ok' : 'diff'
+        canvas.dataset.pixelStats = `colored=${colored} white=${white} diffRatio=${diff.diffRatio.toFixed(4)}`
       } finally {
         texture.destroy()
       }

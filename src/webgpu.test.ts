@@ -4,6 +4,7 @@ import {
   TRIANGLE_VERTEX_COUNT,
   TRIANGLE_VERTICES,
   alignedBytesPerRow,
+  diffRatioVsRgbaReference,
   triangleShaderCode,
   triangleVertexBufferLayout,
 } from './webgpu'
@@ -82,5 +83,53 @@ describe('WebGPU texture pixel readback layout', () => {
     expect(alignedBytesPerRow(1)).toBe(256)
     expect(alignedBytesPerRow(256)).toBe(1024)
     expect(alignedBytesPerRow(65)).toBe(512)
+  })
+})
+
+// 基准图像素比对是纯计算：读回是 BGRA 字节序、参考图是 RGBA，同样颜色
+// 应该比出零差异；任一通道差值超过 threshold×255 的像素才计入差异。
+describe('WebGPU pixel diff against reference', () => {
+  // 2×2 的小图，读回按行对齐（alignedBytesPerRow(2)=256，行尾有填充）。
+  function makePairs(color: { r: number; g: number; b: number }) {
+    const actual = new Uint8Array(alignedBytesPerRow(2) * 2)
+    const reference = new Uint8ClampedArray(2 * 2 * 4)
+    for (let y = 0; y < 2; y++) {
+      for (let x = 0; x < 2; x++) {
+        const offset = y * alignedBytesPerRow(2) + x * 4
+        actual[offset] = color.b
+        actual[offset + 1] = color.g
+        actual[offset + 2] = color.r
+        actual[offset + 3] = 255
+        const referenceOffset = (y * 2 + x) * 4
+        reference[referenceOffset] = color.r
+        reference[referenceOffset + 1] = color.g
+        reference[referenceOffset + 2] = color.b
+        reference[referenceOffset + 3] = 255
+      }
+    }
+    return { actual, reference }
+  }
+
+  it('reports zero diff when BGRA and RGBA describe the same colors', () => {
+    const { actual, reference } = makePairs({ r: 10, g: 20, b: 30 })
+    expect(diffRatioVsRgbaReference(actual, reference, 2, 2)).toEqual({
+      diffPixels: 0,
+      totalPixels: 4,
+      diffRatio: 0,
+    })
+  })
+
+  it('counts only pixels whose channel distance exceeds the threshold', () => {
+    const { actual, reference } = makePairs({ r: 0, g: 0, b: 0 })
+    // 阈值 0.3×255=76.5：差 76 不大于阈值，不计；差 77 大于阈值，计。
+    actual[0] = Math.floor(0.3 * 255)
+    actual[4] = Math.floor(0.3 * 255) + 1
+    // 第三处差异在另一行第一个像素的绿色通道上（同一像素只计一次）。
+    actual[alignedBytesPerRow(2) + 1] = Math.floor(0.3 * 255) + 1
+    expect(diffRatioVsRgbaReference(actual, reference, 2, 2)).toEqual({
+      diffPixels: 2,
+      totalPixels: 4,
+      diffRatio: 0.5,
+    })
   })
 })

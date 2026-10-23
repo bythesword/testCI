@@ -216,15 +216,16 @@ export interface CanvasPixelStats {
   white: number
 }
 
-// 把离屏纹理拷回内存并统计非白像素。无头 Linux 的截图抓不到 WebGPU 画布
-// 内容（合成器不会把它画进截图），但离屏纹理读回不经过画布和合成器，可以
-// 真正确认三角形有没有被画出来。SwiftShader 上 mapAsync 可能一直不
-// resolve，因此带超时保护，超时返回 'timeout'。
-export async function readBackTexturePixelStats(
+// 把离屏纹理拷回内存，返回按行对齐的原始字节（格式为 bgra8unorm 时字节序是
+// B,G,R,A，每行末尾可能有对齐填充，行宽用 alignedBytesPerRow 计算）。无头
+// Linux 的截图抓不到 WebGPU 画布内容（合成器不会把它画进截图），但离屏纹理
+// 读回不经过画布和合成器，可以拿到真实渲染结果。SwiftShader 上 mapAsync
+// 可能一直不 resolve，因此带超时保护，超时返回 'timeout'。
+export async function readBackTexturePixels(
   device: GPUDevice,
   texture: GPUTexture,
   timeoutMs: number,
-): Promise<CanvasPixelStats | 'timeout'> {
+): Promise<Uint8Array | 'timeout'> {
   const bytesPerRow = alignedBytesPerRow(texture.width)
   const buffer = device.createBuffer({
     size: bytesPerRow * texture.height,
@@ -243,13 +244,23 @@ export async function readBackTexturePixelStats(
     buffer.destroy()
     return 'timeout'
   }
+  // getMappedRange 返回映射内存的 ArrayBuffer，直接 new Uint8Array 只是视图，
+  // unmap 后内存失效会读到 undefined；slice 拷贝一份字节再释放缓冲区。
+  const pixels = new Uint8Array(buffer.getMappedRange().slice(0))
+  buffer.unmap()
+  buffer.destroy()
+  return pixels
+}
 
-  const data = new Uint8Array(buffer.getMappedRange())
+// 统计读回数据里的非白像素与白像素（三个通道都 >240 视为白）。
+export function countWhiteAndColoredPixels(data: Uint8Array, width: number): CanvasPixelStats {
+  const bytesPerRow = alignedBytesPerRow(width)
+  const height = data.length / bytesPerRow
   let colored = 0
   let white = 0
-  for (let y = 0; y < texture.height; y++) {
+  for (let y = 0; y < height; y++) {
     const rowOffset = y * bytesPerRow
-    for (let x = 0; x < texture.width; x++) {
+    for (let x = 0; x < width; x++) {
       const offset = rowOffset + x * PIXEL_READ_BYTES_PER_PIXEL
       const first = data[offset]
       const second = data[offset + 1]
@@ -261,9 +272,50 @@ export async function readBackTexturePixelStats(
       }
     }
   }
-  buffer.unmap()
-  buffer.destroy()
   return { colored, white }
+}
+
+// 与 Playwright 截图容差保持一致的像素比对参数。
+export const PIXEL_DIFF_THRESHOLD = 0.3
+export const MAX_DIFF_PIXEL_RATIO = 0.05
+
+export interface PixelDiffStats {
+  diffPixels: number
+  totalPixels: number
+  diffRatio: number
+}
+
+// 把读回的 BGRA 字节与 RGBA 参考图逐像素比对：任一通道差值超过
+// threshold × 255 即视为差异像素。CI 上用它与本地生成的基准图
+// （scripts/generate-webgpu-golden.mjs）比对，确认离屏渲染结果与预期一致；
+// 容差用于吸收跨平台 SwiftShader 的微小光栅化差异。
+export function diffRatioVsRgbaReference(
+  actualBgra: Uint8Array,
+  referenceRgba: Uint8ClampedArray,
+  width: number,
+  height: number,
+  threshold: number = PIXEL_DIFF_THRESHOLD,
+): PixelDiffStats {
+  const bytesPerRow = alignedBytesPerRow(width)
+  const limit = threshold * 255
+  let diffPixels = 0
+  for (let y = 0; y < height; y++) {
+    const rowOffset = y * bytesPerRow
+    const referenceRowOffset = y * width * PIXEL_READ_BYTES_PER_PIXEL
+    for (let x = 0; x < width; x++) {
+      const offset = rowOffset + x * PIXEL_READ_BYTES_PER_PIXEL
+      const referenceOffset = referenceRowOffset + x * PIXEL_READ_BYTES_PER_PIXEL
+      if (
+        Math.abs(actualBgra[offset] - referenceRgba[referenceOffset + 2]) > limit ||
+        Math.abs(actualBgra[offset + 1] - referenceRgba[referenceOffset + 1]) > limit ||
+        Math.abs(actualBgra[offset + 2] - referenceRgba[referenceOffset]) > limit
+      ) {
+        diffPixels += 1
+      }
+    }
+  }
+  const totalPixels = width * height
+  return { diffPixels, totalPixels, diffRatio: diffPixels / totalPixels }
 }
 
 // 诊断探针一：最基础的缓冲区往返——writeBuffer 写入已知值再 mapAsync 读回

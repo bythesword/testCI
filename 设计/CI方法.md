@@ -92,7 +92,7 @@ jobs:
 ### 关键点
 
 - 用 `npm ci` 而非 `npm install`：仓库有 `package-lock.json`，`npm ci` 按锁文件安装，结果可复现。
-- e2e 直接跑无头 Chromium。无头 Linux 的合成器不会把 WebGPU 画布内容画进截图，且画布渲染会销毁 WebGPU 设备、导致之后的 GPU 读回报 Vulkan 实例错误，因此 WebGPU 的视觉快照用例在 CI 上跳过，渲染验证由页面内**先于画布渲染**执行的“离屏纹理读回”断言负责（详见 [WebGPU测试说明.md](WebGPU测试说明.md)）。
+- e2e 直接跑无头 Chromium。无头 Linux 的合成器不会把 WebGPU 画布内容画进截图，且画布渲染会销毁 WebGPU 设备、导致之后的 GPU 读回报 Vulkan 实例错误，因此 WebGPU 的视觉快照用例在 CI 上跳过，渲染验证由页面内**先于画布渲染**执行的“离屏渲染 + 基准图逐像素比对”断言负责（详见 [WebGPU测试说明.md](WebGPU测试说明.md)）。
 - GitHub Actions 会自动设置 `CI=true`；`playwright.config.ts` 里 `reuseExistingServer: !process.env.CI` 据此在 CI 下不复用已有服务。
 - Linux runner 缺少浏览器运行所需的系统依赖，`npx playwright install --with-deps chromium` 一步装齐。
 - 失败时把 `playwright-report/` 与 `test-results/` 作为 artifact 上传，便于事后定位截图差异。

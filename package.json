@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:update": "playwright test --update-snapshots",
+    "generate:webgpu-golden": "node scripts/generate-webgpu-golden.mjs",
     "ci": "npm run lint && npm run format:check && npm run build && npm test && npm run test:e2e",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

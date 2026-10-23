@@ -5,18 +5,20 @@ Playwright 端到端测试各自负责的范围。
 
 ## 测试相关的新增与变更
 
-| 文件                                                     | 作用                                                                          | 类型 |
-| -------------------------------------------------------- | ----------------------------------------------------------------------------- | ---- |
-| `src/webgpu.ts`                                          | 抽出顶点数据、顶点布局、WGSL shader、管线创建、离屏渲染与纹理读回逻辑         | 新增 |
-| `src/webgpu.test.ts`                                     | WebGPU 纯逻辑的 Vitest 单元测试                                               | 新增 |
-| `src/webgpu-page.ts`                                     | 页面挂载：创建 canvas、调用渲染，把渲染与像素读回结果写进 canvas 的 data 属性 | 新增 |
-| `src/webgpu-style.css`                                   | WebGPU 示例专用样式：纯白底色、无边框，页面只有画布内容                       | 新增 |
-| `webgpu.html`                                            | WebGPU 示例页面入口                                                           | 新增 |
-| `tests/e2e/webgpu.spec.ts`                               | 在真实浏览器里跑 WebGPU，用离屏纹理读回验证像素；视觉快照只在本地跑           | 新增 |
-| `tests/e2e/__snapshots__/webgpu.spec.ts-snapshots/*.png` | WebGPU 页面视觉基线（本地生成，Windows 与 Linux 共用）                        | 新增 |
-| `playwright.config.ts`                                   | 增加 `channel: 'chromium'` 和 WebGPU/SwiftShader 启动参数                     | 变更 |
-| `package.json`、`tsconfig.json`                          | 增加 `@webgpu/types` 依赖并引入类型                                           | 变更 |
-| `vite.config.ts`                                         | 增加 `webgpu.html` 作为多页面构建入口                                         | 变更 |
+| 文件                                                     | 作用                                                                            | 类型 |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------- | ---- |
+| `src/webgpu.ts`                                          | 抽出顶点数据、顶点布局、WGSL shader、管线创建、离屏渲染、纹理读回与像素比对逻辑 | 新增 |
+| `src/webgpu.test.ts`                                     | WebGPU 纯逻辑的 Vitest 单元测试                                                 | 新增 |
+| `src/webgpu-page.ts`                                     | 页面挂载：创建 canvas、调用渲染，把渲染与基准图比对结果写进 canvas 的 data 属性 | 新增 |
+| `src/webgpu-triangle-golden.png`                         | 离屏渲染的基准图（400×300，本地生成），CI 上读回像素与它逐像素比对              | 新增 |
+| `scripts/generate-webgpu-golden.mjs`                     | 用同一套离屏渲染路径重新生成基准图（`npm run generate:webgpu-golden`）          | 新增 |
+| `src/webgpu-style.css`                                   | WebGPU 示例专用样式：纯白底色、无边框，页面只有画布内容                         | 新增 |
+| `webgpu.html`                                            | WebGPU 示例页面入口                                                             | 新增 |
+| `tests/e2e/webgpu.spec.ts`                               | 在真实浏览器里跑 WebGPU，验证像素与基准图一致；视觉快照只在本地跑               | 新增 |
+| `tests/e2e/__snapshots__/webgpu.spec.ts-snapshots/*.png` | WebGPU 页面视觉基线（本地生成，Windows 与 Linux 共用）                          | 新增 |
+| `playwright.config.ts`                                   | 增加 `channel: 'chromium'` 和 WebGPU/SwiftShader 启动参数                       | 变更 |
+| `package.json`、`tsconfig.json`                          | 增加 `@webgpu/types` 依赖并引入类型；增加基准图生成脚本                         | 变更 |
+| `vite.config.ts`                                         | 增加 `webgpu.html` 作为多页面构建入口                                           | 变更 |
 
 ## Vitest 单元测试负责哪些
 
@@ -44,13 +46,18 @@ Playwright 端到端测试各自负责的范围。
    queue 提交全部成功（页面不显示文字，渲染结果通过 data 属性暴露；失败时标记为
    `data-rendered="error"`，原因放在 `data-error` 里）。画布渲染发生在读回验证
    之后（原因见下文调用顺序说明）。
-4. 离屏纹理读回断言：等待 `data-pixel-check="ok"`。页面把三角形画进一块离屏纹理
-   并拷回内存统计非白像素——这一步在画布渲染**之前**执行（无头 Linux 上画布渲染
-   会销毁设备，见下文）；读回不经过合成器也不依赖画布，超时标记为 `timeout`、只有
-   白底标记为 `no-colored-pixels`、读回报错标记为 `error`（原因在
-   `data-pixel-error`），统计详情放在 `data-pixel-stats`。页面还会跑几个读回探针
-   （`data-probe-buffer1`、`data-probe-compute`、`data-probe-buffer2`），失败时
-   日志里能看到各层结果便于定位；设备丢失时 `data-device-lost` 记录原因。
+4. 基准图像素比对断言：等待 `data-pixel-check="ok"`。页面把三角形画进一块离屏
+   纹理，读回像素后与仓库里的基准图（`src/webgpu-triangle-golden.png`，由
+   `scripts/generate-webgpu-golden.mjs` 用同一套渲染路径在本地生成）**逐像素比对**：
+   任一通道差值超过 0.3×255 即视为差异像素，差异像素占比不超过 5% 才算通过
+   （容差与 Playwright 截图一致，用于吸收跨平台 SwiftShader 的微小光栅化差异）。
+   这一步在画布渲染**之前**执行（无头 Linux 上画布渲染会销毁设备，见下文）；
+   读回不经过合成器也不依赖画布，超时标记为 `timeout`、只有白底标记为
+   `no-colored-pixels`、与基准图差异过大标记为 `diff`、读回报错标记为 `error`
+   （原因在 `data-pixel-error`），统计详情（含 `diffRatio`）放在 `data-pixel-stats`。
+   页面还会跑几个读回探针（`data-probe-buffer1`、`data-probe-compute`、
+   `data-probe-buffer2`），失败时日志里能看到各层结果便于定位；设备丢失时
+   `data-device-lost` 记录原因。
 5. 视觉快照断言：用 `toHaveScreenshot('webgpu-triangle.png')` 对整页做视觉快照，
    确认画布上真的出现了彩色三角形。此用例只在本地执行，CI 上跳过（原因见下文）。
 
@@ -97,24 +104,26 @@ reference no longer exists."）；它也解释了历史上 `onSubmittedWorkDone`
 GPU→CPU 读回都失败。
 
 最终方案因此确定：把依赖读回的验证全部挪到画布渲染**之前**执行——先做纯缓冲区
-往返探针、compute 执行探针，然后把三角形画进离屏纹理读回统计非白像素
-（`data-pixel-check`），全部完成后再渲染到画布（`data-rendered`，供本地快照和
-人工查看）；画布渲染之后的缓冲区探针（`data-probe-buffer2`）还会顺带确认设备
-是否被销毁。CI 保持无头模式（adapter 可用），视觉快照用例只在本地跑
-（`test.skip(process.env.CI === 'true')`），CI 上的渲染验证由画布渲染前的离屏
-读回断言负责，整条 CI 现已通过。
+往返探针、compute 执行探针，然后把三角形画进离屏纹理，读回像素与仓库里的基准图
+（`src/webgpu-triangle-golden.png`）逐像素比对（`data-pixel-check`，容差与
+Playwright 截图一致）；全部完成后再渲染到画布（`data-rendered`，供本地快照和
+人工查看），画布渲染之后的缓冲区探针（`data-probe-buffer2`）还会顺带确认设备
+是否被销毁。这样 CI 上的验证等价于视觉快照比对：既确认 GPU 真的画出了内容，
+也确认画出的内容（形状、位置、颜色）与预期一致。CI 保持无头模式（adapter
+可用），视觉快照用例只在本地跑（`test.skip(process.env.CI === 'true')`），
+整条 CI 现已通过。
 
 ## 两层测试的分工
 
-| 关注点              | Vitest 单测            | Playwright 端到端测试                   |
-| ------------------- | ---------------------- | --------------------------------------- |
-| 运行环境            | Node，无浏览器、无 GPU | Chromium + SwiftShader                  |
-| 顶点数据、颜色范围  | 负责                   | 不直接断言                              |
-| 顶点布局、stride    | 负责                   | 不直接断言                              |
-| shader 关键标记     | 负责静态字符串检查     | 负责实际编译和运行                      |
-| adapter/device 申请 | 不负责                 | 负责                                    |
-| 画布最终渲染结果    | 不负责                 | 负责（离屏纹理读回断言 + 本地视觉快照） |
-| 错误状态展示        | 不负责                 | 负责（`data-rendered="error"` 标记）    |
+| 关注点              | Vitest 单测            | Playwright 端到端测试                             |
+| ------------------- | ---------------------- | ------------------------------------------------- |
+| 运行环境            | Node，无浏览器、无 GPU | Chromium + SwiftShader                            |
+| 顶点数据、颜色范围  | 负责                   | 不直接断言                                        |
+| 顶点布局、stride    | 负责                   | 不直接断言                                        |
+| shader 关键标记     | 负责静态字符串检查     | 负责实际编译和运行                                |
+| adapter/device 申请 | 不负责                 | 负责                                              |
+| 画布最终渲染结果    | 不负责                 | 负责（离屏渲染与基准图逐像素比对 + 本地视觉快照） |
+| 错误状态展示        | 不负责                 | 负责（`data-rendered="error"` 标记）              |
 
 简单说：单元测试回答“数据结构和 shader 文本对不对”，端到端测试回答“在真实浏览器里
 三角形有没有成功画出来”。
@@ -125,8 +134,11 @@ GPU→CPU 读回都失败。
 npm test
 npm run test:e2e
 npm run test:e2e:update
+npm run generate:webgpu-golden
 npm run ci
 ```
 
 `npm test` 只跑单元测试，`npm run test:e2e` 只跑浏览器测试，
 `npm run test:e2e:update` 在有意变更界面后更新快照，`npm run ci` 跑完整链路。
+三角形或渲染参数变更后，用 `npm run generate:webgpu-golden` 重新生成基准图并
+一并提交。
