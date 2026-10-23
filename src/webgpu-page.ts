@@ -4,6 +4,7 @@ import {
   MAX_DIFF_PIXEL_RATIO,
   TRIANGLE_RENDER_HEIGHT,
   TRIANGLE_RENDER_WIDTH,
+  alignedBytesPerRow,
   countWhiteAndColoredPixels,
   diffRatioVsRgbaReference,
   probeBufferRoundtrip,
@@ -32,10 +33,57 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+// 像素比对超差时把实际读回（左）与基准图（右）并排画成 2D 画布。
+// CI 无头截图画不了 WebGPU 画布，但 2D 画布可以，失败 artifact 里
+// 就能直接看到两边渲染的差异，用于诊断跨平台光栅化差异。
+// 本地比对通过时不会出现，因此不影响本地视觉快照。
+function drawComparison(
+  actualBgra: Uint8Array,
+  referenceRgba: Uint8ClampedArray<ArrayBuffer>,
+): void {
+  const container = document.createElement('div')
+  container.id = 'pixel-diff'
+  container.style.display = 'flex'
+  container.style.gap = '8px'
+
+  const actualCanvas = document.createElement('canvas')
+  actualCanvas.width = TRIANGLE_RENDER_WIDTH
+  actualCanvas.height = TRIANGLE_RENDER_HEIGHT
+  const actualContext = actualCanvas.getContext('2d')!
+  const actualImage = actualContext.createImageData(TRIANGLE_RENDER_WIDTH, TRIANGLE_RENDER_HEIGHT)
+  const bytesPerRow = alignedBytesPerRow(TRIANGLE_RENDER_WIDTH)
+  for (let y = 0; y < TRIANGLE_RENDER_HEIGHT; y++) {
+    const rowOffset = y * bytesPerRow
+    const imageRowOffset = y * TRIANGLE_RENDER_WIDTH * 4
+    for (let x = 0; x < TRIANGLE_RENDER_WIDTH; x++) {
+      const offset = rowOffset + x * 4
+      const imageOffset = imageRowOffset + x * 4
+      actualImage.data[imageOffset] = actualBgra[offset + 2]
+      actualImage.data[imageOffset + 1] = actualBgra[offset + 1]
+      actualImage.data[imageOffset + 2] = actualBgra[offset]
+      actualImage.data[imageOffset + 3] = actualBgra[offset + 3]
+    }
+  }
+  actualContext.putImageData(actualImage, 0, 0)
+
+  const goldenCanvas = document.createElement('canvas')
+  goldenCanvas.width = TRIANGLE_RENDER_WIDTH
+  goldenCanvas.height = TRIANGLE_RENDER_HEIGHT
+  const goldenContext = goldenCanvas.getContext('2d')!
+  goldenContext.putImageData(
+    new ImageData(referenceRgba, TRIANGLE_RENDER_WIDTH, TRIANGLE_RENDER_HEIGHT),
+    0,
+    0,
+  )
+
+  container.append(actualCanvas, goldenCanvas)
+  app.append(container)
+}
+
 // 把基准 PNG 解码成 RGBA 像素。基准图由 scripts/generate-webgpu-golden.mjs
 // 用同一套离屏渲染路径在本地生成并提交在仓库里，CI 上把读回的像素与它
 // 逐像素比对，等价于视觉快照比对（带容差）。
-async function decodePngToRgba(url: string): Promise<Uint8ClampedArray> {
+async function decodePngToRgba(url: string): Promise<Uint8ClampedArray<ArrayBuffer>> {
   const response = await fetch(url)
   if (!response.ok) {
     throw new Error(`加载基准图失败: HTTP ${response.status}`)
@@ -78,6 +126,19 @@ requestWebGpuDevice()
 
     const record = (name: string, value: string) => {
       canvas.dataset[name] = value
+    }
+
+    // 记录 adapter 信息（描述/厂商/架构）：跨平台像素差异可能来自不同的
+    // SwiftShader 后端（如 Subzero 与 LLVM），事后从 CI 日志里对照。
+    try {
+      const adapter = await navigator.gpu.requestAdapter()
+      const info = adapter?.info
+      record(
+        'adapter',
+        info ? `${info.description} | ${info.vendor} | ${info.architecture}` : 'none',
+      )
+    } catch (error: unknown) {
+      record('adapter', errorMessage(error))
     }
 
     try {
@@ -123,7 +184,12 @@ requestWebGpuDevice()
           TRIANGLE_RENDER_HEIGHT,
         )
         canvas.dataset.pixelCheck = diff.diffRatio <= MAX_DIFF_PIXEL_RATIO ? 'ok' : 'diff'
-        canvas.dataset.pixelStats = `colored=${colored} white=${white} diffRatio=${diff.diffRatio.toFixed(4)}`
+        canvas.dataset.pixelStats =
+          `colored=${colored} white=${white} diffRatio=${diff.diffRatio.toFixed(4)} ` +
+          `maxDiff=${diff.maxChannelDiff} buckets=${diff.diffBuckets.join('/')}`
+        if (canvas.dataset.pixelCheck === 'diff') {
+          drawComparison(pixels, golden)
+        }
       } finally {
         texture.destroy()
       }

@@ -283,6 +283,12 @@ export interface PixelDiffStats {
   diffPixels: number
   totalPixels: number
   diffRatio: number
+  // 全部像素里最大的单通道差值，用来区分“细小噪声”（几十以内）与
+  // “结构性渲染差异”（上百，例如渐变方向不同）。
+  maxChannelDiff: number
+  // 按每像素最大通道差值分桶计数（≤30 / 31-76 / 77-149 / ≥150），
+  // 第三个桶起超过阈值 0.3×255=76.5，会计入 diffPixels。
+  diffBuckets: [number, number, number, number]
 }
 
 // 把读回的 BGRA 字节与 RGBA 参考图逐像素比对：任一通道差值超过
@@ -299,23 +305,44 @@ export function diffRatioVsRgbaReference(
   const bytesPerRow = alignedBytesPerRow(width)
   const limit = threshold * 255
   let diffPixels = 0
+  let maxChannelDiff = 0
+  const diffBuckets: [number, number, number, number] = [0, 0, 0, 0]
   for (let y = 0; y < height; y++) {
     const rowOffset = y * bytesPerRow
     const referenceRowOffset = y * width * PIXEL_READ_BYTES_PER_PIXEL
     for (let x = 0; x < width; x++) {
       const offset = rowOffset + x * PIXEL_READ_BYTES_PER_PIXEL
       const referenceOffset = referenceRowOffset + x * PIXEL_READ_BYTES_PER_PIXEL
-      if (
-        Math.abs(actualBgra[offset] - referenceRgba[referenceOffset + 2]) > limit ||
-        Math.abs(actualBgra[offset + 1] - referenceRgba[referenceOffset + 1]) > limit ||
-        Math.abs(actualBgra[offset + 2] - referenceRgba[referenceOffset]) > limit
-      ) {
+      const channelDiff = Math.max(
+        Math.abs(actualBgra[offset] - referenceRgba[referenceOffset + 2]),
+        Math.abs(actualBgra[offset + 1] - referenceRgba[referenceOffset + 1]),
+        Math.abs(actualBgra[offset + 2] - referenceRgba[referenceOffset]),
+      )
+      if (channelDiff > maxChannelDiff) {
+        maxChannelDiff = channelDiff
+      }
+      if (channelDiff <= 30) {
+        diffBuckets[0] += 1
+      } else if (channelDiff <= 76) {
+        diffBuckets[1] += 1
+      } else if (channelDiff <= 149) {
+        diffBuckets[2] += 1
+      } else {
+        diffBuckets[3] += 1
+      }
+      if (channelDiff > limit) {
         diffPixels += 1
       }
     }
   }
   const totalPixels = width * height
-  return { diffPixels, totalPixels, diffRatio: diffPixels / totalPixels }
+  return {
+    diffPixels,
+    totalPixels,
+    diffRatio: diffPixels / totalPixels,
+    maxChannelDiff,
+    diffBuckets,
+  }
 }
 
 // 诊断探针一：最基础的缓冲区往返——writeBuffer 写入已知值再 mapAsync 读回

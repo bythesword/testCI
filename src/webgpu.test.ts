@@ -116,6 +116,8 @@ describe('WebGPU pixel diff against reference', () => {
       diffPixels: 0,
       totalPixels: 4,
       diffRatio: 0,
+      maxChannelDiff: 0,
+      diffBuckets: [4, 0, 0, 0],
     })
   })
 
@@ -130,6 +132,9 @@ describe('WebGPU pixel diff against reference', () => {
       diffPixels: 2,
       totalPixels: 4,
       diffRatio: 0.5,
+      // 最大单通道差 77；桶分布：一个 0、一个 76（31-76 桶）、两个 77（77-149 桶）。
+      maxChannelDiff: 77,
+      diffBuckets: [1, 1, 2, 0],
     })
   })
 })
