@@ -33,10 +33,10 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-// 像素比对超差时把实际读回（左）与基准图（右）并排画成 2D 画布。
-// CI 无头截图画不了 WebGPU 画布，但 2D 画布可以，失败 artifact 里
-// 就能直接看到两边渲染的差异，用于诊断跨平台光栅化差异。
-// 本地比对通过时不会出现，因此不影响本地视觉快照。
+// 像素比对超差时把实际读回（上）与基准图（下）竖排画成 2D 画布。
+// Playwright 失败截图画得了 2D 画布（画不了的只有 WebGPU 画布），
+// 失败截图里就能直接看到两边渲染的差异。本地比对通过时不会出现，
+// 因此不影响本地视觉快照。
 function drawComparison(
   actualBgra: Uint8Array,
   referenceRgba: Uint8ClampedArray<ArrayBuffer>,
@@ -85,7 +85,7 @@ function drawComparison(
 }
 
 // 把基准 PNG 解码成 RGBA 像素。基准图由 scripts/generate-webgpu-golden.mjs
-// 用同一套离屏渲染路径在本地生成并提交在仓库里，CI 上把读回的像素与它
+// 用同一套离屏渲染路径在本地生成并提交在仓库里，本地 e2e 把读回的像素与它
 // 逐像素比对，等价于视觉快照比对（带容差）。
 async function decodePngToRgba(url: string): Promise<Uint8ClampedArray<ArrayBuffer>> {
   const response = await fetch(url)
@@ -112,10 +112,11 @@ async function decodePngToRgba(url: string): Promise<Uint8ClampedArray<ArrayBuff
 // data-rendered="true" 表示渲染链路全部成功，data-rendered="error" 表示失败，
 // 失败原因放在 data-error 里便于排查。
 //
-// 调用顺序很关键：无头 Linux CI 上，画布渲染提交后浏览器会销毁 WebGPU 设备
+// 调用顺序很关键：无头 Linux 上，画布渲染提交后浏览器会销毁 WebGPU 设备
 // （合成器没有 WebGPU 画布的 backing factory），之后任何 mapAsync 都报
-// "A valid external Instance reference no longer exists"。因此所有依赖读回的
-// 验证都放在画布渲染之前：
+// "A valid external Instance reference no longer exists"。虽然 e2e 目前只在
+// 本地（Windows）跑，仍保留这个顺序以兼容 Linux/容器环境，并把所有依赖读回的
+// 验证放在画布渲染之前：
 //   1. 纯缓冲区往返探针（data-probe-buffer1）
 //   2. compute 执行探针（data-probe-compute）
 //   3. 三角形画进离屏纹理后读回统计非白像素（data-pixel-check）
@@ -132,8 +133,8 @@ requestWebGpuDevice()
       canvas.dataset[name] = value
     }
 
-    // 记录 adapter 信息（描述/厂商/架构）：跨平台像素差异可能来自不同的
-    // SwiftShader 后端（如 Subzero 与 LLVM），事后从 CI 日志里对照。
+    // 记录 adapter 信息（描述/厂商/架构），失败时便于对照渲染后端
+    // （跨平台像素差异可能来自不同的 SwiftShader 后端）。
     try {
       const adapter = await navigator.gpu.requestAdapter()
       const info = adapter?.info

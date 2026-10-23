@@ -18,9 +18,10 @@
 - `npm run preview` — 本地预览生产构建。
 - `npm test` — 运行一次 Vitest 单元测试。
 - `npm run test:watch` — 以监听模式运行 Vitest。
-- `npm run test:e2e` — 运行 Playwright 测试（会自动启动开发服务器）。
+- `npm run test:e2e` — 运行 Playwright 测试（会自动启动开发服务器）。**只在本地运行**，远端 CI 不跑。
 - `npm run test:e2e:update` — 界面有意变更后重新生成视觉快照基线。
 - `npm run format` / `npm run format:check` — 用 Prettier 格式化或校验格式。
+- `npm run ci` — 本地全套检查（lint + format:check + build + 单元测试 + e2e）。**push 前必须运行并通过**。
 
 ## 代码风格与命名规范
 
@@ -33,9 +34,14 @@ TypeScript 开启严格模式（`strict: true`），未使用的局部变量和�
 ## 测试指南
 
 - 单元测试：使用 Vitest，放在 `src/**/*.test.ts`，以 `describe`/`it` 组织（参考 `src/counter.test.ts`）。
-- 端到端测试：使用 Playwright，位于 `tests/e2e/`，优先使用角色、文本选择器，并用 `toHaveScreenshot()` 做视觉校验。
+- 端到端测试：使用 Playwright，位于 `tests/e2e/`，优先使用角色、文本选择器，并用 `toHaveScreenshot()` 做视觉校验。**只在本地运行**（远端 CI 不跑，见上）。
 - 用清晰的行为描述命名测试，例如“increments the counter and updates the snapshot”。
 
 ## 提交与 Pull Request 规范
 
 仓库目前还没有 Git 提交历史。建议使用 Conventional Commit 格式（`feat:`、`fix:`、`test:`、`chore:`），保持改动聚焦，并在正文中说明原因。Pull Request 应说明改了什么、关联相关 issue，涉及视觉或 UI 变更时附上前后对比截图。仅在有意的变更时通过 `npm run test:e2e:update` 更新快照，并提交更新后的 PNG 文件。
+
+**强制要求：push 前必须在本机执行 `npm run ci` 并全绿。** 检查分为两部分：
+
+- 远端 GitHub CI 只跑不依赖浏览器与 GPU 的检查：`format:check`、`build`（含类型检查）、单元测试。
+- Playwright 端到端测试（含 WebGPU 渲染验证与视觉快照）**只在本地运行**。无头 Linux 环境无法稳定渲染 WebGPU 画布（画布渲染会销毁设备、截图抓不到内容、跨平台 SwiftShader 像素差异大），因此远端不跑 e2e，这部分验证由本地的 `npm run test:e2e` 负责。详见 [设计/WebGPU测试说明.md](设计/WebGPU测试说明.md) 与 [设计/CI方法.md](设计/CI方法.md)。

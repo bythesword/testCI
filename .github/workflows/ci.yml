@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# 远端 CI 只跑不依赖浏览器与 GPU 的静态检查与单元测试。
+# Playwright 端到端测试（含 WebGPU 渲染验证和视觉快照）只在本地运行：
+# 无头 Linux 环境无法稳定渲染 WebGPU 画布（详见 设计/WebGPU测试说明.md），
+# 因此强制要求 push 前在本地执行 npm run ci 跑完全套检查（见 AGENTS.md）。
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -31,19 +35,3 @@ jobs:
 
       - name: Run unit tests
         run: npm test
-
-      - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
-
-      - name: Run end-to-end tests
-        run: npm run test:e2e
-
-      - name: Upload Playwright report on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report
-          path: |
-            playwright-report/
-            test-results/
-          if-no-files-found: ignore
