@@ -41,10 +41,14 @@ function drawComparison(
   actualBgra: Uint8Array,
   referenceRgba: Uint8ClampedArray<ArrayBuffer>,
 ): void {
+  // 竖排并隐藏 WebGPU 画布：无头截图里 WebGPU 画布本来就是空白，
+  // 隐藏后两张对比图正好占满 800×600 视口，失败截图里都能完整看到。
+  canvas.style.display = 'none'
   const container = document.createElement('div')
   container.id = 'pixel-diff'
   container.style.display = 'flex'
-  container.style.gap = '8px'
+  container.style.flexDirection = 'column'
+  container.style.gap = '0px'
 
   const actualCanvas = document.createElement('canvas')
   actualCanvas.width = TRIANGLE_RENDER_WIDTH

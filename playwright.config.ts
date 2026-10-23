@@ -32,6 +32,9 @@ export default defineConfig({
     colorScheme: 'light',
     // 关闭页面动画/过渡，减少时序抖动对截图的影响。
     reducedMotion: 'reduce',
+    // 失败时自动截图保存到 test-results/，随 artifact 上传，便于在 CI 失败后
+    // 查看页面当时的真实状态（如 WebGPU 像素比对超差时的并排对比图）。
+    screenshot: 'only-on-failure',
   },
   // 截图比对的容差配置：本地 Windows 与 CI Linux 的系统字体不同，
   // 逐像素比对会因字体渲染差异误报。放宽到可接受的范围后，
