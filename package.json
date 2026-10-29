@@ -13,7 +13,9 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:update": "playwright test --update-snapshots",
+    "test:e2e:compare": "playwright test tests/e2e/golden-diff.spec.ts",
     "generate:webgpu-golden": "node scripts/generate-webgpu-golden.mjs",
+    "generate:webgpu-golden:gpu": "node scripts/generate-webgpu-golden.mjs --hardware",
     "ci": "npm run lint && npm run format:check && npm run build && npm test && npm run test:e2e",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

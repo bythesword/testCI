@@ -14,17 +14,12 @@ export default defineConfig({
   use: {
     // page.goto('/') 这类相对地址的解析基准。
     baseURL: 'http://127.0.0.1:5173',
-    // 使用新的 Chromium 无头模式。默认的 headless shell 里 WebGPU
-    // 请求 adapter 会返回 null，换成 channel: 'chromium' 后才能跑 WebGPU。
+    // 使用 Chromium 有头模式跑真实硬件 GPU；channel: 'chromium' 避免默认 headless shell。
     channel: 'chromium',
-    // 启动 Chromium 时追加的开关，用于开启 WebGPU 并用 SwiftShader
-    // 做软件渲染，保证没有独立 GPU 的 CI/容器环境也能稳定运行。
+    headless: false,
+    // 开启 WebGPU，不加 SwiftShader 参数，让 Chromium 使用本机硬件 GPU。
     launchOptions: {
-      args: [
-        '--enable-unsafe-webgpu',
-        '--use-webgpu-adapter=swiftshader',
-        '--enable-unsafe-swiftshader',
-      ],
+      args: ['--enable-unsafe-webgpu'],
     },
     // 固定视口尺寸，确保每次截图大小一致、快照可比对。
     viewport: { width: 800, height: 600 },

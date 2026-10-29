@@ -1,5 +1,4 @@
 import './webgpu-style.css'
-import goldenUrl from './webgpu-triangle-golden.png'
 import {
   MAX_DIFF_PIXEL_RATIO,
   TRIANGLE_RENDER_HEIGHT,
@@ -14,6 +13,12 @@ import {
   renderTriangleToTexture,
   requestWebGpuDevice,
 } from './webgpu.ts'
+
+// 默认使用硬件 GPU 基准图；?golden=sw 时回退到 SwiftShader 基准图。
+const useSoftwareGolden = new URLSearchParams(location.search).get('golden') === 'sw'
+const goldenUrl = useSoftwareGolden
+  ? new URL('./webgpu-triangle-golden.png', import.meta.url).href
+  : new URL('./webgpu-triangle-golden-gpu.png', import.meta.url).href
 
 // WebGPU 示例页面刻意保持极简：纯白底色 + 一块 canvas，没有文字、边框和
 // 其他底色。GitHub Actions 的无头 Linux 环境对 WebGPU 画布内容的截图不稳定，

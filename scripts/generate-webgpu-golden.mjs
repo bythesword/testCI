@@ -1,29 +1,39 @@
-// 生成 WebGPU 离屏渲染的基准图（src/webgpu-triangle-golden.png）。
-// 用法：npm run generate:webgpu-golden
+// 生成 WebGPU 离屏渲染的基准图。
+// 默认：npm run generate:webgpu-golden —— SwiftShader（src/webgpu-triangle-golden.png）。
+// 硬件：npm run generate:webgpu-golden:gpu（即加 --hardware）—— 有头 Chromium + 硬件 GPU
+//       （src/webgpu-triangle-golden-gpu.png）。
 //
-// 流程与 CI 上的验证完全一致：无头 Chromium + SwiftShader，把三角形画进
-// 离屏纹理，读回像素后编码为 PNG。页面在 CI 上把读回的像素与这张图逐像素
-// 比对，等价于视觉快照比对（带容差）。三角形或渲染参数变更后需要重新生成。
+// 流程与 CI 上的验证完全一致：把三角形画进离屏纹理，读回像素后编码为 PNG。
+// 页面把读回的像素与这张图逐像素比对，等价于视觉快照比对（带容差）。
+// 三角形或渲染参数变更后需要重新生成。
 /* global Buffer, ImageData, console, document, navigator */
 // 本文件一半跑在 Node（读回后写 PNG），一半在 page.evaluate 里跑在浏览器
 // （申请 WebGPU、渲染与像素编码），因此两类全局都要声明。
 import { writeFileSync } from 'node:fs'
+import process from 'node:process'
 import { chromium } from '@playwright/test'
 import { createServer } from 'vite'
 
-const GOLDEN_PATH = 'src/webgpu-triangle-golden.png'
+const useHardware = process.argv.includes('--hardware')
+const GOLDEN_PATH = useHardware
+  ? 'src/webgpu-triangle-golden-gpu.png'
+  : 'src/webgpu-triangle-golden.png'
 
 const server = await createServer({ server: { port: 5173, strictPort: false } })
 await server.listen()
 try {
-  const browser = await chromium.launch({
-    channel: 'chromium',
-    args: [
-      '--enable-unsafe-webgpu',
-      '--use-webgpu-adapter=swiftshader',
-      '--enable-unsafe-swiftshader',
-    ],
-  })
+  const browser = await chromium.launch(
+    useHardware
+      ? { channel: 'chromium', headless: false, args: ['--enable-unsafe-webgpu'] }
+      : {
+          channel: 'chromium',
+          args: [
+            '--enable-unsafe-webgpu',
+            '--use-webgpu-adapter=swiftshader',
+            '--enable-unsafe-swiftshader',
+          ],
+        },
+  )
   try {
     const page = await browser.newPage()
     await page.goto(server.resolvedUrls.local[0])
