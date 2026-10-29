@@ -1,6 +1,6 @@
 // 生成 WebGPU 离屏渲染的基准图。
 // 默认：npm run generate:webgpu-golden —— SwiftShader（src/webgpu-triangle-golden.png）。
-// 硬件：npm run generate:webgpu-golden:gpu（即加 --hardware）—— 有头 Chromium + 硬件 GPU
+// 硬件：npm run generate:webgpu-golden:gpu（即加 --hardware）—— 无头 Chromium + 硬件 GPU
 //       （src/webgpu-triangle-golden-gpu.png）。
 //
 // 流程与 CI 上的验证完全一致：把三角形画进离屏纹理，读回像素后编码为 PNG。
@@ -24,7 +24,7 @@ await server.listen()
 try {
   const browser = await chromium.launch(
     useHardware
-      ? { channel: 'chromium', headless: false, args: ['--enable-unsafe-webgpu'] }
+      ? { channel: 'chromium', headless: true, args: ['--enable-unsafe-webgpu'] }
       : {
           channel: 'chromium',
           args: [

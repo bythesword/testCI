@@ -14,9 +14,9 @@ export default defineConfig({
   use: {
     // page.goto('/') 这类相对地址的解析基准。
     baseURL: 'http://127.0.0.1:5173',
-    // 使用 Chromium 有头模式跑真实硬件 GPU；channel: 'chromium' 避免默认 headless shell。
+    // 使用新版 Chromium 无头模式跑真实硬件 GPU；channel: 'chromium' 避免默认 headless shell。
     channel: 'chromium',
-    headless: false,
+    headless: true,
     // 开启 WebGPU，不加 SwiftShader 参数，让 Chromium 使用本机硬件 GPU。
     launchOptions: {
       args: ['--enable-unsafe-webgpu'],

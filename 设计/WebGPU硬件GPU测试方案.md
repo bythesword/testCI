@@ -10,7 +10,7 @@
 
 | 文件                                 | 作用                                                      |
 | ------------------------------------ | --------------------------------------------------------- |
-| `playwright.config.ts`               | 默认配置：有头 Chromium + 硬件 GPU，不带 SwiftShader 参数 |
+| `playwright.config.ts`               | 默认配置：无头 Chromium + 硬件 GPU，不带 SwiftShader 参数 |
 | `tests/e2e/webgpu.spec.ts`           | 默认 WebGPU 用例：硬件 GPU 渲染、读回比对、视觉快照       |
 | `tests/e2e/golden-diff.spec.ts`      | 比较软件/硬件两张基准图，断言差异率不超阈值               |
 | `src/webgpu-page.ts`                 | 默认用硬件基准图，`?golden=sw` 回退 SwiftShader 基准图    |
@@ -22,7 +22,7 @@
 
 `playwright.config.ts` 使用：
 
-- `headless: false`：真实 GPU 需要窗口与合成器，无头模式通常拿不到硬件 adapter。
+- `headless: true`：本机 Windows 上无头 Chromium 可直接使用硬件 GPU，测试时不弹窗口。
 - `channel: 'chromium'`：避免默认 headless shell。
 - 启动参数只保留 `--enable-unsafe-webgpu`，删掉两个 SwiftShader 参数。
 
@@ -55,7 +55,7 @@
 ### 基准图生成
 
 - `npm run generate:webgpu-golden`：SwiftShader 生成 `src/webgpu-triangle-golden.png`。
-- `npm run generate:webgpu-golden:gpu`：有头硬件 GPU 生成
+- `npm run generate:webgpu-golden:gpu`：无头硬件 GPU 生成
   `src/webgpu-triangle-golden-gpu.png`。
 
 ## 验证命令
@@ -73,6 +73,7 @@ npm run ci                    # push 前必须全绿
 
 - 像素不可复现：硬件 GPU 的光栅化结果随显卡与驱动变化，快照与硬件基准图只在本机或
   同型号 GPU 上有意义，不应进 CI。
-- 有头模式依赖本机图形会话，远程无显示环境会启动失败，测试时会弹出真实浏览器窗口。
+- 无头模式在本机 Windows 上可用（已实测 adapter 为 amd/rdna-2），但无头 Linux 环境仍存在
+  画布渲染销毁设备、截图抓不到内容的问题（见 设计/WebGPU测试说明.md），仅用于本地。
 - 若 `data-adapter` 为空或 adapter 为 null，说明本机 Chromium 没拿到硬件 adapter：
   排查 GPU 驱动与 D3D12/Vulkan，必要时追加 `--enable-features=Vulkan`。
